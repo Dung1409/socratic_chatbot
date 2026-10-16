@@ -1,0 +1,176 @@
+export type Assignment = {
+  id: string;
+  title: string;
+  prompt: string;
+  target: number;
+  due: string;
+  author: string;
+  grade: string;
+  excerpt: string;
+  status: string;
+  progress: number;
+};
+export type Criterion = { id: string; name: string; weight: number; desc: string };
+export type Rubric = { version: number; criteria: Criterion[] };
+export type Step = { level: number; q: string; hints: string[] };
+export type Turn =
+  | { kind: "tutor"; step: number; text: string; level: number }
+  | { kind: "hint"; step: number; tier: number; text: string }
+  | {
+      kind: "student";
+      step: number;
+      text: string;
+      level: number;
+      quality: number | null;
+      hints: number;
+    };
+export type Review = {
+  id: string;
+  session_id: string;
+  scores: Record<string, number>;
+  feedback: string;
+  total: number;
+  created_at: string;
+  rubric_version: number;
+};
+export type Session = {
+  id: string;
+  assignment_id: string;
+  assignment: Assignment;
+  steps: Step[];
+  step: number;
+  hint_tier: number;
+  done: boolean;
+  submitted: boolean;
+  essay: string;
+  turns: Turn[];
+  version: number;
+  rubric: Rubric;
+  created_at: string;
+  updated_at: string;
+  submitted_at?: string;
+  student_name: string;
+  student_id: string;
+  class_name: string;
+  tutor_mode: string;
+  review: Review | null;
+};
+export type Dashboard = {
+  sessions: number;
+  answers: number;
+  hints: number;
+  hints_per_answer: number;
+  submitted: number;
+  pending: number;
+  latest_session: Session | null;
+  latest_review: Review | null;
+};
+export type Progress = {
+  series: { week: string; score: number }[];
+  bloom_profile: { skill: string; value: number }[];
+  latest: Session | null;
+  pending: number;
+};
+export type Student = {
+  id: string;
+  name: string;
+  cls: string;
+  sessions: number;
+  bloom: number | null;
+  score: number | null;
+  trend: string;
+  hints: number;
+};
+export type Overview = {
+  students: Student[];
+  sessions: number;
+  pending: number;
+  distribution: { b: string; n: number }[];
+};
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${import.meta.env["VITE_API_URL"] || ""}/api${path}`, {
+      ...options,
+      headers: {
+        ...(options?.body && !(options.body instanceof FormData)
+          ? { "Content-Type": "application/json" }
+          : {}),
+        ...options?.headers,
+      },
+    });
+  } catch {
+    throw new ApiError("Không kết nối được backend. Kiểm tra FastAPI đang chạy ở cổng 8000.", 0);
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    const detail = data?.detail;
+    throw new ApiError(
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((e: { msg: string }) => e.msg).join("; ")
+          : `Yêu cầu thất bại (${response.status})`,
+      response.status,
+    );
+  }
+  return response.json() as Promise<T>;
+}
+const post = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "POST", body: JSON.stringify(body) });
+export const api = {
+  assignments: () => request<Assignment[]>("/assignments"),
+  createAssignment: (body: {
+    title: string;
+    prompt: string;
+    target: number;
+    due?: string;
+    excerpt?: string;
+  }) => post<Assignment>("/assignments", body),
+  extract: (file: File) => {
+    const data = new FormData();
+    data.append("file", file);
+    return request<{ filename: string; title: string; text: string }>("/uploads/extract", {
+      method: "POST",
+      body: data,
+    });
+  },
+  rubric: () => request<Rubric>("/rubric"),
+  saveRubric: (criteria: Criterion[]) =>
+    request<Rubric>("/rubric", { method: "PUT", body: JSON.stringify({ criteria }) }),
+  dashboard: () => request<Dashboard>("/dashboard"),
+  progress: () => request<Progress>("/progress"),
+  overview: () => request<Overview>("/teacher/overview"),
+  sessions: () => request<Session[]>("/sessions"),
+  session: (id: string) => request<Session>(`/sessions/${id}`),
+  start: (id: string) => post<Session>("/sessions", { assignment_id: id }),
+  message: (session: Session, text: string, key: string) =>
+    post<Session>(`/sessions/${session.id}/messages`, {
+      text,
+      expected_version: session.version,
+      client_message_id: key,
+    }),
+  hint: (session: Session, key: string) =>
+    post<Session>(`/sessions/${session.id}/hints`, {
+      expected_version: session.version,
+      client_message_id: key,
+    }),
+  submit: (session: Session, essay: string, key: string) =>
+    post<Session>(`/sessions/${session.id}/submit`, {
+      essay,
+      expected_version: session.version,
+      client_message_id: key,
+    }),
+  review: (id: string, scores: Record<string, number>, feedback: string) =>
+    post<Session>(`/sessions/${id}/reviews`, { scores, feedback }),
+};

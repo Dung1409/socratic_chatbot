@@ -9,6 +9,14 @@ Giao diện phát triển từ [Toan0409/bloom-guided-scribe](https://github.com
 Hướng dẫn production: [Northflank + Vercel](docs/DEPLOY_NORTHFLANK_VERCEL.md).
 Docker image mặc định `APP_ENV=production`; Compose đặt rõ `development` cho local.
 Production bắt buộc PostgreSQL, Secure cookie, origin/proxy allowlist và migration Job riêng.
+Northflank Free: một Deployment Service `socratic-api` đặt `RUN_MODE=combined`, chạy một
+API và một worker trong cùng container, dùng volume `socratic-files` 6 GB ReadWriteOnce
+mount `/app/storage`; không tạo Worker Service riêng. CMD mới là
+`python -m backend.app.entrypoint`; có thể override bằng `python -m backend.app.combined`.
+Đặt `AUTO_MIGRATE=false`, `BACKGROUND_JOBS=true`, `SHUTDOWN_GRACE_SECONDS=120` và termination
+grace của nền tảng 150 giây. Probe: `python -m backend.app.healthcheck`.
+Mặc định image vẫn `RUN_MODE=api`; `RUN_MODE=worker` và command migration độc lập vẫn dùng được.
+Docker Compose local bên dưới vẫn minh họa cách chạy API/worker thành service riêng.
 
 Sau khi khởi tạo môi trường, cấu hình `OPENAI_API_KEY` trong `.env` gốc trước khi bắt đầu phiên AI. Backend tự đọc `.env`; biến môi trường tiến trình có ưu tiên cao hơn. Khóa chỉ dùng ở backend, không đưa vào frontend hoặc Git.
 

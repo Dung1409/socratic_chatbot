@@ -39,6 +39,13 @@ def positive_integer(name, default):
     return value
 
 
+def run_mode():
+    value = os.getenv("RUN_MODE", "api").strip().lower()
+    if value not in {"api", "worker", "combined"}:
+        raise RuntimeError("RUN_MODE must be api, worker or combined")
+    return value
+
+
 def auto_migrate():
     enabled = boolean("AUTO_MIGRATE", not production())
     if production() and enabled:

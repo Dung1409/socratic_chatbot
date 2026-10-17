@@ -140,6 +140,9 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             db.check_ready()
             if background_jobs:
                 config.check_storage(queue.storage_path)
+            if config.run_mode() == "combined":
+                from .combined import check_health
+                check_health()
             if config.production() and tutor_mode == "openai" and not tutor.configured:
                 raise RuntimeError("AI is not configured")
         except Exception as exc:

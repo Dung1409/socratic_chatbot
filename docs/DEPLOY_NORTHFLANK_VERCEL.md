@@ -3,13 +3,17 @@
 ## 1. Kiến trúc
 
 - React/Vite SPA trên Vercel gọi API cùng origin qua `/api`.
-- FastAPI trên Northflank, port 8000; PostgreSQL 16 Addon lưu dữ liệu, auth session và queue `jobs`.
-- Worker riêng dùng cùng backend image, PostgreSQL và shared persistent volume với API.
-- Migration là Northflank Job, phải thành công trước khi phát hành API/worker.
-- Một volume **Multi Read/Write**, cùng subpath, mount `/app/storage` cho cả API và worker.
+- Một Deployment Service **`socratic-api`**, một replica, chạy FastAPI port 8000 và một worker
+  trong **cùng container** bằng `RUN_MODE=combined`; không tạo Worker Service riêng.
+- Một PostgreSQL 16 Addon lưu dữ liệu, auth session và queue `jobs`.
+- Giữ Build Service và Migration Job độc lập hiện có; Job phải thành công trước release.
+- Một volume **`socratic-files`, 6 GB, ReadWriteOnce (Single Read/Write)**, mount `/app/storage`
+  vào `socratic-api`. API và worker thấy cùng filesystem trong container.
 - OpenAI chỉ gọi từ API. Không thêm Redis, Celery, S3; không thay policy Socratic/rubric.
 
 Thực hiện staging trước production. Repository không tự push/deploy. Không dùng DB production cho tests.
+Đây là cấu hình cho tài nguyên Free đã có của project; kiểm tra quota thực tế trong tài khoản,
+không giả định mọi region/gói Free đều cấp 1 GiB RAM hoặc cùng hạn mức volume/Job.
 
 ## 2. PostgreSQL 16
 
@@ -35,7 +39,7 @@ vào Git, build arguments hoặc Vercel. Production chỉ đọc process environ
 | Biến | Giá trị |
 | --- | --- |
 | APP_ENV | production |
-| DATABASE_URL | Connection URL PostgreSQL addon, cùng database cho ba workload |
+| DATABASE_URL | Connection URL PostgreSQL addon, dùng chung cho combined và Migration Job |
 | AUTO_MIGRATE | false |
 | DB_STATEMENT_TIMEOUT_MS | 30000; có thể tăng riêng cho Job sau khi thử migration trên staging |
 | DB_LOCK_TIMEOUT_MS | 5000; điều tra lock trước khi chạy lại Job |
@@ -61,16 +65,25 @@ sequence cần thiết. Nếu tách role, bảo đảm quyền trên bảng/sequ
 | UPLOADS_PER_HOUR | 20 mặc định, theo tài khoản |
 | BACKGROUND_JOBS | true |
 | STORAGE_PATH | /app/storage |
+| RUN_MODE | combined trên `socratic-api`; mặc định image vẫn là api |
+| SHUTDOWN_GRACE_SECONDS | 120; supervisor từ chối giá trị dưới 60 |
+| WORKER_JOB_TIMEOUT_SECONDS | 45 |
+| WORKER_PARSER_MEMORY_MB | 256 để bắt đầu thử nghiệm container khoảng 1 GiB |
 
 Tạo JWT key trong môi trường riêng bằng `python -c "import secrets; print(secrets.token_urlsafe(48))"`,
 đưa vào secret manager. Không lưu kết quả vào log/issue/chat và không tạo lại mỗi lần deploy.
 
-### Nhóm worker và frontend
+### Worker trong combined và frontend
 
-Worker thêm STORAGE_PATH=/app/storage, WORKER_JOB_TIMEOUT_SECONDS=45,
-WORKER_PARSER_MEMORY_MB=512. Không cấp JWT/OpenAI key, CORS hoặc proxy settings cho worker.
-Giới hạn bộ nhớ parser áp dụng trên Linux; bắt đầu container từ 1 GiB rồi đo thực tế.
-Đặt termination grace period ít nhất 60 giây để hoàn tất job hoặc deadline.
+Hai subprocess kế thừa cùng environment, gồm DATABASE_URL, STORAGE_PATH và các secret API;
+worker chỉ sử dụng cấu hình cần thiết và không log secret. Nếu tách worker trong tương lai,
+chỉ cấp nhóm DB/storage/worker cho service đó. Combined chạy trên Linux/POSIX container.
+Giới hạn bộ nhớ parser áp dụng trên Linux; mặc định combined là 256 MiB nếu chưa đặt biến.
+Bắt đầu container từ khoảng 1 GiB rồi đo thực tế với PDF/DOCX và tải API đồng thời.
+Không đặt `--reload`, không tăng Uvicorn workers, không nhân bản worker hoặc bật autoscaling.
+Đặt **termination grace period của nền tảng 150 giây**, lớn hơn supervisor 120 giây,
+để chờ job, DB finish và thu hồi subprocess. Nếu tăng parser/DB timeout, tăng cả hai grace periods.
+Giới hạn parser không phải giới hạn RAM toàn container; OOM vẫn có thể xảy ra khi tải cao.
 
 Frontend: VITE_API_URL để trống hoặc bỏ qua; production luôn gọi `/api` cùng origin.
 Biến này chỉ là override development, không có `/api` ở cuối. API_PROXY_TARGET chỉ dành cho
@@ -80,7 +93,7 @@ Vite development. Không đưa secret backend vào biến VITE_*.
 
 Tạo Northflank build service từ repo, Dockerfile `backend/Dockerfile`, build context/work directory
 `backend/`. Context phải chứa `requirements.txt` và `app/`; không dùng context root với Dockerfile này.
-Build một lần và chọn cùng immutable image/digest cho API, worker và migration Job.
+Build một lần và chọn cùng immutable image/digest cho `socratic-api` và Migration Job.
 
 Kiểm tra local từ repository root:
 
@@ -107,60 +120,82 @@ Migration có transaction và version, chạy lại qua runner sau khi kiểm tr
 Không sửa migration đã áp, không reset schema/database. Ba migration hiện có giữ nguyên.
 Dữ liệu legacy owner_id=NULL được giữ, cần kế hoạch gán owner riêng nếu muốn chuyển dữ liệu cũ.
 
-Tắt auto-deploy API/worker theo source change, hoặc cấu hình workflow chặn release:
-build thành công → migration Job thành công → deploy API/worker cùng digest.
+Tắt auto-deploy `socratic-api` theo source change, hoặc cấu hình workflow chặn release:
+build thành công → migration Job thành công → deploy combined cùng digest.
 Không để workload mới tự deploy trước khi Job hoàn tất.
 
-## 6. API Deployment
+## 6. Deployment Service `socratic-api`
 
-Liên kết nhóm chung + API, dùng image đã migration thành công, expose HTTP port 8000, bật HTTPS ingress.
-Command mặc định:
-
-```text
-python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --no-access-log
-```
-
-Biến PORT không thay command này. Gắn storage trước khi chạy. Cấu hình startup/readiness
-HTTP `/api/ready`, liveness `/api/health`, port 8000, timeout 10 giây, period 15–30 giây.
-Thiếu DB/JWT/origins/proxy/AI key hoặc cấu hình production không hợp lệ sẽ chặn startup.
-
-Health kiểm tra tiến trình sống. Ready kiểm tra DB/schema, thực sự ghi/đọc storage và AI key
-có cấu hình; không gọi OpenAI tính phí, không chứng minh model access/quota. Giám sát worker riêng.
-
-## 7. Worker Deployment và health check
-
-Dùng cùng image với API, nhóm DB + worker, không expose HTTP port. Override command:
+Liên kết nhóm chung + API/worker, dùng image đã migration thành công, expose HTTP port 8000,
+bật HTTPS ingress, một replica. Đặt `RUN_MODE=combined`, giữ CMD mặc định mới:
 
 ```text
-python -m backend.app.worker
+python -m backend.app.entrypoint
 ```
 
-Override HTTP health check của image bằng CMD probe:
+Nếu service đang override CMD bằng Uvicorn cũ, **xóa override** hoặc thay bằng:
 
 ```text
-python -c "from backend.app.worker import check_health; check_health()"
+python -m backend.app.combined
 ```
 
-Khuyến nghị period 10 giây, timeout 10 giây, startup delay 10 giây, failure threshold 3.
-Probe kiểm tra heartbeat dưới 60 giây, DB/schema và storage I/O. Không dùng cho migration Job.
+Vẫn phải đặt `RUN_MODE=combined` khi override trực tiếp để CMD health probe chọn đúng mode.
+Supervisor khởi chạy đúng một Uvicorn process (`--workers 1`) và một `python -m backend.app.worker`.
+Log hai tiến trình đi thẳng stdout/stderr. Không có shell background hoặc migration lúc startup;
+combined từ chối `AUTO_MIGRATE=true` và `BACKGROUND_JOBS=false`.
+Biến PORT không đổi port cố định 8000. Gắn volume trước khi chạy.
+Thiếu DB/JWT/origins/proxy/AI key hoặc cấu hình production không hợp lệ chặn startup.
+
+API/worker thoát trước yêu cầu shutdown, kể cả exit 0: supervisor dừng process còn lại và exit 1
+để nền tảng restart. SIGTERM/SIGINT chuyển tới cả hai; worker hoàn tất job đang chạy rồi thoát.
+Khi quá deadline, supervisor kill process groups, thu hồi parser mồ côi và wait/reap children;
+job bị gián đoạn vẫn phục hồi qua lease/attempt hiện có. Không cam kết hoàn tất khi bị SIGKILL/OOM.
+
+## 7. Health check cho cả API và worker
+
+Trên `socratic-api`, cấu hình startup, readiness và liveness bằng **CMD probe**:
+
+```text
+python -m backend.app.healthcheck
+```
+
+Khuyến nghị startup delay 10 giây, period 15 giây, timeout 40 giây, failure threshold 3;
+startup cho phép ít nhất 90 giây trước khi kết luận thất bại. Nền tảng cần cấu hình probes rõ ràng,
+không dựa vào việc tự nhập Docker HEALTHCHECK. Docker image cũng có cùng CMD probe.
+Northflank hỗ trợ [CMD probes](https://northflank.com/docs/v1/application/observe/configure-health-checks).
+
+Probe gọi `/api/ready`: DB/schema, storage I/O, cấu hình AI key (không gọi OpenAI),
+supervisor/API/worker còn sống và worker `check_health()` với heartbeat dưới 60 giây.
+Worker bị treo sẽ thành unhealthy khi heartbeat stale, dù HTTP API vẫn phục vụ được.
+Supervisor xóa state readiness ngay khi drain. `/api/health` chỉ là API liveness cơ bản;
+**không dùng riêng endpoint này để kết luận combined healthy**. Response contract của API giữ nguyên.
+State/heartbeat ở `/tmp`, không lưu trên persistent volume, được làm mới mỗi lần combined khởi động.
+
+Migration Job vẫn override command `python -m backend.app.migrate`, **tắt mọi health probe**,
+không mount `socratic-files`; RUN_MODE không can thiệp command override.
 
 Worker có lease 120 giây được gia hạn. Parser chạy subprocess, bị terminate khi hết deadline;
 lỗi tạm thời retry tối đa ba attempts, file sai định dạng kết thúc thất bại.
-Kill giữa job: worker khác nhận lại sau khi lease hết hạn. Lease token chặn kết quả cũ ghi đè.
+Kill giữa job: worker sau restart nhận lại sau khi lease hết hạn. Lease token chặn kết quả cũ ghi đè.
 Parser có thể thực thi lại; không cam kết exactly-once. SIGTERM ngừng nhận job mới sau job hiện tại.
 
-## 8. Shared persistent volume
+## 8. ReadWriteOnce persistent volume
 
-Tạo **một volume Multi Read/Write**, gắn cùng volume/subpath vào API và worker tại `/app/storage`.
-Hai volume khác nhau có cùng mount path không chia sẻ dữ liệu. Single Read/Write không phù hợp.
-Nếu region/plan không hỗ trợ, dừng triển khai và xác nhận với Northflank; không tự đổi storage.
+Dùng volume có sẵn **`socratic-files`, 6 GB, ReadWriteOnce**, gắn duy nhất vào `socratic-api`
+tại `/app/storage` (mount point thật, không trỏ STORAGE_PATH tới subdirectory).
+ReadWriteOnce phù hợp vì API và worker trong cùng container; không cần Multi Read/Write.
+Không gắn volume này vào Worker Service hoặc Migration Job riêng.
+Giữ một replica và chọn rollout **dừng container cũ trước khi tạo container mới**, tránh
+hai revision cùng ghi volume hoặc hai worker chạy chồng. Chấp nhận downtime ngắn khi release;
+không dùng rolling surge/blue-green với cấu hình volume này.
+Northflank mô tả access mode tại [persistent volumes](https://northflank.com/docs/v1/application/databases-and-persistence/add-a-volume).
 
 Docker build chỉ tạo thư mục; persistent volume phải được gắn ở runtime. Mount có thể che quyền
 thư mục trong image: cấu hình owner/group 10001:10001 bằng nền tảng. Production Linux yêu cầu
 STORAGE_PATH là mount point; quên gắn volume sẽ chặn startup thay vì lưu vào container tạm. Không chạy app bằng root
 hoặc chmod 777. Startup/readiness thực hiện probe I/O để phát hiện lỗi quyền/mount read-only.
 
-Trên staging: upload TXT qua API, worker chuyển sang needs_review, restart riêng API/worker
+Trên staging: upload TXT qua API, worker chuyển sang needs_review, restart container combined
 và đọc lại tài liệu. Backup volume cùng kế hoạch backup DB. Chưa có tự dọn file mồ côi/retention;
 cần giám sát dung lượng và chính sách vận hành trước khi sử dụng quy mô lớn.
 
@@ -204,6 +239,9 @@ và `/api/does-not-exist`. API lỗi phải trả lỗi API, không trả HTML i
 - DB đúng addon, đủ migration; restart API không tự migration.
 - Health/ready 200; ready 503 khi mất DB/storage (chỉ thử lỗi trên staging).
 - Worker CMD probe exit 0, API upload → worker → xem lại sau restart.
+- Kill API và kill worker riêng: container exit khác 0, restart có đúng một API/một worker.
+- SIGTERM khi job đang chạy: worker hoàn tất trong grace; SIGINT dừng cả hai; không còn zombie.
+- Bỏ mount hoặc mount read-only: combined startup thất bại. Heartbeat stale: ready 503/CMD exit 1.
 - Cookie đúng Secure/HttpOnly/path: login → reload → access hết hạn → refresh → logout.
 - CSRF/origin sai bị từ chối; hai tài khoản không đọc dữ liệu nhau; logout thu hồi token cũ.
 - IP/rate limit đúng qua chuỗi proxy; IP header giả không vượt hạn mức; quota trả 429.
@@ -220,7 +258,7 @@ này mà chưa kiểm tra lại lease và UX. Không thay model/policy/rubric kh
 2. Build image từ commit cụ thể, ghi digest mới và digest trước đó.
 3. Backup trước migration thay đổi dữ liệu/schema; diễn tập staging.
 4. Chạy migration Job image mới; lỗi thì dừng release, giữ API/worker cũ, điều tra.
-5. Deploy API và worker cùng image mới sau Job exit 0; chờ readiness/health.
+5. Deploy một `socratic-api` combined sau Job exit 0, dừng revision cũ trước; chờ readiness/health.
 6. Smoke test backend, phát hành frontend Vercel commit tương ứng.
 7. Kiểm tra cookie, upload, phiên học test; theo dõi lỗi và chi phí.
 
@@ -236,13 +274,33 @@ sau backup nên cần quyết định của người vận hành. Không reset/x
 | Startup thất bại | Tên biến trong lỗi: DB URL, JWT, Secure, origins, proxy, AI key; không in giá trị secret |
 | Migration exit 1 | Kết nối/quyền, timeout/lock và schema_migrations qua công cụ bảo mật; không chạy lại mù quáng |
 | Ready 503 | DB/schema, mount, UID/GID, dung lượng và storage I/O |
-| Worker unhealthy | Override HTTP probe chưa, heartbeat, DB, mount và deadline |
+| Worker unhealthy | CMD probe trên socratic-api, heartbeat, DB, mount và deadline |
 | Upload đứng uploaded | Worker có chạy, cùng DB/volume, backlog và attempts |
 | Login/refresh 403 | Origin allowlist, CSRF, prefix /api có giữ nguyên |
 | Reload mất session | HTTPS, Set-Cookie, path, frontend có cùng origin |
 | Nhiều người chung 429 | Xác minh client IP/trusted proxies; không bỏ limiter để che lỗi |
 | AI lỗi | Quota ứng dụng/provider, Retry-After, model access, giữ input để thử lại |
 | Trang con 404 / API trả HTML | Root Directory Vercel, rewrite order và backend destination |
+
+## 14. Kiểm thử local có thể lặp lại
+
+Từ repository root, dùng Python environment đã cài `backend/requirements-dev.txt`:
+
+```powershell
+python -m pytest backend/tests -q
+docker build -f backend/Dockerfile -t socratic-backend:combined-test backend
+python scripts/test_combined_container.py
+```
+
+Script chỉ tạo PostgreSQL 16/container/network/volume tên `socratic-test-<random>-...`,
+không đọc `.env`, không nhận DATABASE_URL ngoài, và dọn tài nguyên nó đã tạo khi kết thúc.
+Nó chạy migration độc lập, storage âm tính, combined với memory limit 1 GiB, upload qua API,
+heartbeat stale, kill từng child, restart, SIGTERM trong job, SIGINT và hai mode độc lập;
+sau đó chạy suite backend với schema PostgreSQL tạm. Chỉ dùng credentials test và template tutor,
+không gọi OpenAI tính phí. Docker named volume mô phỏng storage dùng chung, không chứng minh
+CSI/ReadWriteOnce fencing hoặc rollout của Northflank. Không xem smoke test này là load test.
+Các bài supervisor dành cho POSIX được skip khi chạy pytest trực tiếp trên Windows;
+cần chạy chúng trên Linux để kiểm chứng nhánh process group/subreaper.
 
 ## Tài liệu nền tảng
 

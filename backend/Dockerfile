@@ -8,6 +8,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=production \
     AUTO_MIGRATE=false \
     BACKGROUND_JOBS=true \
+    RUN_MODE=api \
+    SHUTDOWN_GRACE_SECONDS=120 \
     STORAGE_PATH=/app/storage
 
 WORKDIR /app
@@ -24,7 +26,9 @@ COPY --chown=app:app app/ ./backend/app/
 USER 10001:10001
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=3).close()"]
+STOPSIGNAL SIGTERM
 
-CMD ["python", "-m", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-access-log"]
+HEALTHCHECK --interval=15s --timeout=40s --start-period=30s --retries=3 \
+    CMD ["python", "-m", "backend.app.healthcheck"]
+
+CMD ["python", "-m", "backend.app.entrypoint"]

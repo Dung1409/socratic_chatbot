@@ -1,6 +1,8 @@
 # SocraVăn — Socratic × Bloom
 
-Giao diện được lấy từ [Toan0409/bloom-guided-scribe](https://github.com/Toan0409/bloom-guided-scribe), commit `64c30dd7eb11b2745d17d0548c214f668cb67c91`. Giữ bố cục, màu sắc, font và các màn hình học sinh/giáo viên của bản gốc. Backend sử dụng **FastAPI**, chạy **PostgreSQL** và worker khi dùng Docker Compose; vẫn hỗ trợ **SQLite** khi chạy Python trực tiếp.
+Ứng dụng tự học Ngữ văn: học sinh tự tải lên hoặc nhập đề riêng, chọn mục tiêu Bloom, luyện tập qua đối thoại Socratic và lưu bài viết cuối phiên. Không có vai trò giáo viên, bộ đề có sẵn hoặc quy trình chờ chấm bài.
+
+Giao diện phát triển từ [Toan0409/bloom-guided-scribe](https://github.com/Toan0409/bloom-guided-scribe), commit `64c30dd7eb11b2745d17d0548c214f668cb67c91`. Backend sử dụng **FastAPI**, chạy **PostgreSQL** và worker khi dùng Docker Compose; vẫn hỗ trợ **SQLite** khi chạy Python trực tiếp.
 
 ## Chạy trên Windows
 
@@ -54,14 +56,14 @@ Compose chạy bốn service thường trực và một service migration chạy
 | Service | Chức năng | Điều kiện khởi động |
 | --- | --- | --- |
 | `postgres` | PostgreSQL 16, dữ liệu ứng dụng và bảng `jobs` bền vững | Health check `pg_isready` |
-| `migrate` | Áp migration có phiên bản và tạo dữ liệu mẫu, rồi thoát với mã 0 | PostgreSQL sẵn sàng |
+| `migrate` | Áp migration có phiên bản, rồi thoát với mã 0 | PostgreSQL sẵn sàng |
 | `backend` | FastAPI, ghi nhận upload và tạo job; user thường | Migration thành công; health check `/api/ready` kiểm tra DB và kho tệp |
 | `worker` | Trích xuất TXT, DOCX, PDF có chữ; nhận job từ PostgreSQL | Migration thành công; health check heartbeat và DB |
 | `frontend` | Build React bằng Node.js, phục vụ SPA bằng Nginx | API và worker khỏe |
 
 `migrate` ở trạng thái `Exited (0)` sau khi chạy là bình thường. API và worker
-dùng cùng `backend/Dockerfile`, có lệnh khởi động riêng. Migration và seed có
-thể chạy lại; chúng không ghi đè rubric hoặc dữ liệu đã lưu.
+dùng cùng `backend/Dockerfile`, có lệnh khởi động riêng. Migration có thể chạy
+lại; không tự tạo đề mẫu hoặc ghi đè nội dung học tập đã lưu.
 
 Nginx chuyển tiếp `/api/` sang `backend:8000`, giữ nguyên tiền tố `/api`.
 Frontend gọi API cùng origin, không cần `VITE_API_URL` hoặc cấu hình CORS riêng.
@@ -93,7 +95,9 @@ Hai named volume giữ dữ liệu khi restart, build lại hoặc `docker compo
 
 Database SQLite local và volume `socratic_data` của bản Compose cũ không được
 tự động chuyển sang PostgreSQL. Dữ liệu cũ vẫn ở vị trí cũ; stack mới tạo dữ
-liệu mẫu nếu PostgreSQL chưa được khởi tạo.
+bảng trống nếu PostgreSQL chưa được khởi tạo. Migration `002_self_study` ẩn các
+đề mẫu cũ khỏi danh sách tạo phiên mới; vẫn giữ lịch sử phiên học và các đề
+người dùng đã tạo, không xóa dữ liệu học tập.
 
 Trong Compose, upload trả `202` cùng `document_id` và `job_id`. Frontend truy
 vấn `GET /api/documents/{id}` cho đến khi trạng thái là `needs_review`, rồi
@@ -104,7 +108,7 @@ Worker claim job bằng khóa hàng `FOR UPDATE SKIP LOCKED`, có lease 120 giâ
 gia hạn khi xử lý, retry lỗi tạm thời tối đa ba lần và nhận lại job có lease
 hết hạn sau khi tiến trình bị dừng. Token của lease ngăn worker cũ ghi đè kết
 quả mới. Job và dữ liệu gốc vẫn còn nếu API/worker restart. Worker hiện xử lý
-trích xuất; chấm điểm vẫn do giáo viên thực hiện, chưa có tác vụ đánh giá LLM.
+trích xuất; chưa có tác vụ đánh giá LLM hoặc điểm số tự động.
 
 ```powershell
 # Xem log
@@ -131,19 +135,18 @@ Compose mặc định chỉ mở cổng trên `127.0.0.1`, phù hợp chế đ�
 
 ## Chức năng đã nối API
 
-- Xem danh sách đề; giáo viên tạo đề và chọn Bloom mục tiêu.
-- Nhập đề trực tiếp hoặc trích xuất TXT UTF-8, DOCX và PDF có chữ (tối đa 10MB). Kiểm tra/sửa nội dung trước khi xác nhận.
-- Bắt đầu đúng đề đã chọn; lưu đối thoại, ba mức gợi ý, tiến độ và bài nộp vào PostgreSQL hoặc SQLite. Tải lại trang để tiếp tục. Bản nháp lưu trong trình duyệt.
+- Tải đề riêng bằng TXT UTF-8, DOCX hoặc PDF có chữ (tối đa 10MB, PDF tối đa 30 trang), hoặc nhập nội dung trực tiếp. Kiểm tra/sửa nội dung và chọn mục tiêu Bloom trước khi xác nhận.
+- Danh sách chỉ hiển thị các đề người dùng tạo. Bản cài mới bắt đầu trống; mở trang phiên học khi chưa có dữ liệu sẽ hướng dẫn thêm đề thay vì tự tạo phiên mẫu.
+- Bắt đầu đúng đề đã chọn; lưu đối thoại, ba mức gợi ý, tiến độ và bài viết cuối phiên vào PostgreSQL hoặc SQLite. Tải lại trang để tiếp tục. Bản nháp lưu trong trình duyệt.
 - Chống gửi trùng bằng `client_message_id`, chống ghi đè khi nhiều yêu cầu gửi cùng lúc bằng phiên bản trạng thái.
-- Giáo viên sửa và lưu rubric tổng trọng số 100%. Mỗi phiên giữ bản rubric riêng để thay đổi rubric không ảnh hưởng phiên đang học.
-- Xem bài nộp và lịch sử phiên; chấm từng tiêu chí và lưu nhận xét. Mỗi lần chấm tạo một bản ghi mới, giữ lịch sử trong cơ sở dữ liệu.
-- Tổng quan, tiến trình, điểm và nhận xét lấy từ dữ liệu backend đã lưu.
+- Lưu bài viết để hoàn thành phiên, xem lại đối thoại và bài viết trong nhật ký tự học.
+- Tổng quan và tiến trình hiển thị số câu trả lời, gợi ý, số phiên hoàn thành và hoạt động theo Bloom. Không có màn hình chấm điểm, trạng thái chờ giáo viên hoặc API giáo viên/rubric/review.
 
 ## Phạm vi bản local
 
-Gia sư hiện dùng **kịch bản câu hỏi**, chưa tích hợp LLM. Đề Vợ nhặt giữ kịch bản của repo gốc; các đề khác dùng chuỗi câu hỏi chung theo mục tiêu Bloom. Chưa đánh giá tự động câu trả lời hoặc kết luận năng lực Bloom; điểm do giáo viên nhập. Biểu đồ Bloom thể hiện số câu đã luyện tập.
+Gia sư hiện dùng **kịch bản câu hỏi**, chưa tích hợp LLM. Các đề riêng dùng chuỗi câu hỏi chung theo mục tiêu Bloom học sinh chọn. Chưa đánh giá tự động câu trả lời hoặc kết luận năng lực Bloom. Biểu đồ Bloom thể hiện số câu đã luyện tập; bài viết được lưu để người học tự xem lại.
 
-Chưa có đăng nhập/phân quyền: toàn bộ phiên lưu cho hồ sơ Minh Anh; danh sách lớp có sáu hồ sơ mẫu. Chỉ chạy local; cần bổ sung xác thực và kiểm tra quyền tài nguyên trước khi triển khai nhiều người dùng. Đã có PostgreSQL, migration và worker trích xuất lưu tệp gốc trong Compose. Chưa hỗ trợ OCR ảnh/PDF scan, đánh giá LLM, xuất dữ liệu nghiên cứu hoặc toàn bộ schema nghiệp vụ của tài liệu thiết kế. Dữ liệu nghiệp vụ hiện giữ cấu trúc JSON của bản demo trong bảng `documents`; các bảng quan hệ đầy đủ vẫn cần migration tiếp theo.
+Chưa có đăng nhập hoặc tách dữ liệu theo tài khoản: bản local là một không gian tự học dùng chung. Đã bỏ hồ sơ lớp và học sinh mẫu. Cần bổ sung xác thực và quyền sở hữu tài nguyên trước khi triển khai nhiều người dùng. Đã có PostgreSQL, migration và worker trích xuất lưu tệp gốc trong Compose. Chưa hỗ trợ OCR ảnh/PDF scan, đánh giá LLM hoặc xuất dữ liệu nghiên cứu. Dữ liệu nghiệp vụ hiện giữ cấu trúc JSON trong bảng `documents`.
 
 Khi chạy Python trực tiếp, SQLite tự tạo tại `backend/data/socratic.db`; đổi vị trí bằng `DATABASE_PATH`. Đặt `DATABASE_URL` để dùng PostgreSQL, hoặc bộ biến `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`; PostgreSQL có ưu tiên cao hơn đường dẫn SQLite. `AUTO_MIGRATE=true` tự áp migration lúc khởi động khi chạy trực tiếp. Compose đặt `AUTO_MIGRATE=false` và chạy service `migrate` trước.
 
@@ -171,7 +174,7 @@ npm --prefix frontend run build
 npm --prefix frontend run test:e2e
 ```
 
-E2E dùng Chrome đã cài trên máy, backend riêng ở cổng 8011 và database riêng trong `backend/data/`. Các bài kiểm tra chạy luồng học–nộp–chấm–xem kết quả, chọn đúng đề, tải tệp có xác nhận và điều hướng mobile. Ảnh chụp kết quả nằm trong `artifacts/`. Muốn dùng Chromium do Playwright quản lý, bỏ `launchOptions.channel` trong `frontend/playwright.config.ts` rồi chạy `npx playwright install chromium` từ thư mục `frontend`.
+E2E dùng Chrome đã cài trên máy, backend riêng ở cổng 8011 và database riêng trong `backend/data/`. Kiểm tra luồng từ trạng thái trống, nhập/tải đề có xác nhận, chọn mục tiêu, học–lưu bài–xem lại, phục hồi bản nháp và điều hướng mobile; các đường dẫn giáo viên phải không còn truy cập được. Ảnh chụp nằm trong `artifacts/`. Muốn dùng Chromium do Playwright quản lý, bỏ `launchOptions.channel` trong `frontend/playwright.config.ts` rồi chạy `npx playwright install chromium` từ thư mục `frontend`.
 
 ## Cấu trúc
 
@@ -179,14 +182,13 @@ E2E dùng Chrome đã cài trên máy, backend riêng ở cổng 8011 và databa
 backend/
   app/main.py       # FastAPI routes và phục vụ bản build frontend
   app/db.py         # PostgreSQL/SQLite, giao dịch và khởi tạo dữ liệu
-  app/migrate.py    # Lệnh áp migration và seed
+  app/migrate.py    # Lệnh áp migration
   app/migrations/   # Migration có phiên bản cho PostgreSQL và SQLite
   app/jobs.py       # Job bền vững, lease, retry và kho tệp
   app/worker.py     # Tiến trình trích xuất chạy riêng
   app/extraction.py # Trích xuất TXT, DOCX, PDF có chữ
   app/schemas.py    # Kiểm tra dữ liệu đầu vào
   app/tutor.py      # Chuỗi câu hỏi ở chế độ kịch bản
-  app/seed.json     # Đề bài, rubric, hồ sơ mẫu từ repo gốc
   tests/            # Kiểm thử nghiệp vụ và API
 frontend/
   src/routes/       # Các màn hình React/TanStack Router

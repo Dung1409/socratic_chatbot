@@ -1,14 +1,8 @@
-import json
-from pathlib import Path
-
-SEED = json.loads(Path(__file__).with_name("seed.json").read_text(encoding="utf-8"))
 BLOOM_NAMES = ["Nhớ", "Hiểu", "Vận dụng", "Phân tích", "Đánh giá", "Sáng tạo"]
 
 
 def lesson_steps(assignment):
     """Template mode: no AI grading or inferred student ability."""
-    if assignment["id"] == "vo-nhat":
-        return SEED["socraticSteps"]
     questions = [
         "Em hãy đọc yêu cầu đề bài và xác định vấn đề chính cần giải quyết bằng lời của mình.",
         "Em hiểu vấn đề đó như thế nào? Hãy giải thích một khái niệm hoặc ý chính trong đề.",

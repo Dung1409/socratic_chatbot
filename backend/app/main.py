@@ -13,8 +13,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from .db import Database
 from .extraction import ExtractionError, MAX_FILE_BYTES, extract_text, validate_upload
 from .jobs import JobQueue
-from .schemas import AssignmentInput, RubricInput, SessionInput, ActionInput, MessageInput, SubmissionInput, ReviewInput
-from .tutor import SEED, BLOOM_NAMES, lesson_steps, tutor_turn
+from .schemas import AssignmentInput, SessionInput, ActionInput, MessageInput, SubmissionInput
+from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,7 +31,8 @@ def require(conn, collection, identifier):
 
 
 def public_session(session):
-    return {key: value for key, value in session.items() if key != "requests"}
+    return {key: value for key, value in session.items()
+            if key not in {"requests", "rubric", "review", "student_id", "student_name", "class_name"}}
 
 
 def saved_sessions(conn):
@@ -55,7 +56,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         yield
 
     app = FastAPI(title="SocraVăn API", version="0.1.0", lifespan=lifespan,
-                  description="Backend local/demo cho giao diện Socratic × Bloom. Gia sư dùng kịch bản, chưa kết nối LLM. Chưa có xác thực người dùng.")
+                  description="Không gian tự học Socratic × Bloom với đề do người học cung cấp. Gia sư dùng kịch bản, chưa kết nối LLM. Chưa có xác thực người dùng.")
     app.state.db = db
     app.state.queue = queue
     app.add_middleware(CORSMiddleware, allow_origins=os.getenv(
@@ -80,17 +81,23 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     @app.get("/api/assignments", tags=["Assignments"])
     def assignments():
         with db.connect() as conn:
-            items = db.all(conn, "assignments")
+            items = [a for a in db.all(conn, "assignments") if a.get("source") != "legacy_seed"]
             sessions = saved_sessions(conn)
             for a in items:
                 session = next((s for s in sessions if s["assignment_id"] == a["id"]), None)
-                a["status"] = "Đã nộp" if session and session["submitted"] else "Đang học" if session else "Chưa bắt đầu"
+                a["status"] = "Đã hoàn thành" if session and session["submitted"] else "Đang học" if session else "Chưa bắt đầu"
                 a["progress"] = 100 if session and session["submitted"] else round(session["step"] / len(session["steps"]) * 100) if session else 0
             return items
 
     @app.post("/api/assignments", status_code=201, tags=["Assignments"])
     def create_assignment(body: AssignmentInput):
-        item = {**body.model_dump(), "id": str(uuid4()), "status": "Chưa bắt đầu", "progress": 0}
+        if body.document_id:
+            document = queue.document(body.document_id)
+            if document is None:
+                raise HTTPException(404, "Không tìm thấy tài liệu")
+            if document["status"] != "needs_review":
+                raise HTTPException(409, "Hãy chờ tệp được trích xuất trước khi xác nhận đề")
+        item = {**body.model_dump(), "id": str(uuid4()), "source": "student", "status": "Chưa bắt đầu", "progress": 0}
         with db.connect(write=True) as conn:
             db.put(conn, "assignments", item["id"], item)
         return item
@@ -127,19 +134,6 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             raise HTTPException(404, "Không tìm thấy tài liệu")
         return result
 
-    @app.get("/api/rubric", tags=["Rubric"])
-    def rubric():
-        with db.connect() as conn:
-            return require(conn, "settings", "rubric")
-
-    @app.put("/api/rubric", tags=["Rubric"])
-    def save_rubric(body: RubricInput):
-        with db.connect(write=True) as conn:
-            current = require(conn, "settings", "rubric")
-            current = {"version": current["version"] + 1, "criteria": [c.model_dump() for c in body.criteria]}
-            db.put(conn, "settings", "rubric", current)
-            return current
-
     @app.post("/api/sessions", tags=["Sessions"])
     def start_session(body: SessionInput):
         with db.connect(write=True) as conn:
@@ -148,14 +142,14 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             existing = next((s for s in saved_sessions(conn) if s["assignment_id"] == body.assignment_id), None)
             if existing:
                 return public_session(existing)
+            if assignment.get("source") == "legacy_seed":
+                raise HTTPException(404, "Hãy tải lên hoặc nhập đề riêng để bắt đầu tự học")
             steps = lesson_steps(assignment)
             session = {
                 "id": str(uuid4()), "assignment_id": assignment["id"], "assignment": assignment,
-                "student_id": "s1", "student_name": "Nguyễn Minh Anh", "class_name": "12A1",
                 "steps": steps, "step": 0, "hint_tier": 0, "done": False, "submitted": False,
                 "essay": "", "turns": [tutor_turn(0, steps)], "version": 0, "requests": {},
-                "rubric": require(conn, "settings", "rubric"), "created_at": now(), "updated_at": now(),
-                "tutor_mode": "template", "review": None,
+                "created_at": now(), "updated_at": now(), "tutor_mode": "template",
             }
             db.put(conn, "sessions", session["id"], session)
             return public_session(session)
@@ -222,67 +216,25 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def submit(session_id: str, body: SubmissionInput):
         return mutate(session_id, body, "submit")
 
-    @app.post("/api/sessions/{session_id}/reviews", tags=["Teacher"])
-    def review(session_id: str, body: ReviewInput):
-        with db.connect(write=True) as conn:
-            session = require(conn, "sessions", session_id)
-            if not session["submitted"]:
-                raise HTTPException(409, "Bài làm chưa được nộp")
-            criteria = session["rubric"]["criteria"]
-            if set(body.scores) != {c["id"] for c in criteria}:
-                raise HTTPException(422, "Cần chấm đầy đủ tiêu chí theo rubric của phiên học")
-            result = {"id": str(uuid4()), "session_id": session_id, **body.model_dump(),
-                      "total": round(sum(body.scores[c["id"]] * c["weight"] / 100 for c in criteria), 2),
-                      "created_at": now(), "rubric_version": session["rubric"]["version"]}
-            db.put(conn, "reviews", result["id"], result)
-            session["review"] = result
-            session["version"] += 1
-            session["updated_at"] = now()
-            db.put(conn, "sessions", session_id, session)
-            return public_session(session)
-
     @app.get("/api/dashboard", tags=["Analytics"])
     def dashboard():
         with db.connect() as conn:
             saved = saved_sessions(conn)
             answers = [t for s in saved for t in s["turns"] if t["kind"] == "student"]
             hints = sum(t["kind"] == "hint" for s in saved for t in s["turns"])
-            reviews = db.all(conn, "reviews")
             return {"sessions": len(saved), "answers": len(answers), "hints": hints,
                     "hints_per_answer": round(hints / len(answers), 1) if answers else 0,
                     "submitted": sum(s["submitted"] for s in saved),
-                    "pending": sum(s["submitted"] and not s["review"] for s in saved),
-                    "latest_session": public_session(next((s for s in saved if not s["submitted"]), saved[0])) if saved else None,
-                    "latest_review": reviews[0] if reviews else None}
+                    "latest_session": public_session(next((s for s in saved if not s["submitted"]), saved[0])) if saved else None}
 
     @app.get("/api/progress", tags=["Analytics"])
     def progress():
         with db.connect() as conn:
             saved = saved_sessions(conn)
-            reviewed = sorted([s for s in saved if s["review"]], key=lambda s: s["review"]["created_at"])
-            latest = reviewed[-1] if reviewed else None
             return {
-                "series": [{"week": f"Bài {i + 1}", "score": s["review"]["total"]} for i, s in enumerate(reviewed)],
                 "bloom_profile": [{"skill": name, "value": sum(t["kind"] == "student" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)],
-                "latest": public_session(latest) if latest else None,
-                "pending": sum(s["submitted"] and not s["review"] for s in saved),
+                "sessions": [public_session(s) for s in saved],
             }
-
-    @app.get("/api/teacher/overview", tags=["Teacher"])
-    def teacher_overview():
-        with db.connect() as conn:
-            saved = saved_sessions(conn)
-            students = []
-            for fixture in SEED["students"]:
-                items = [s for s in saved if s["student_id"] == fixture["id"]]
-                answers = [t for s in items for t in s["turns"] if t["kind"] == "student"]
-                scores = [s["review"]["total"] for s in items if s["review"]]
-                students.append({"id": fixture["id"], "name": fixture["name"], "cls": fixture["cls"],
-                                 "sessions": len(items), "bloom": None, "trend": "—",
-                                 "score": round(sum(scores) / len(scores), 1) if scores else None,
-                                 "hints": round(sum(t["kind"] == "hint" for s in items for t in s["turns"]) / len(answers), 1) if answers else 0})
-            return {"students": students, "sessions": len(saved), "pending": sum(s["submitted"] and not s["review"] for s in saved),
-                    "distribution": [{"b": name, "n": sum(t["kind"] == "student" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)]}
 
     dist = (frontend_dist or ROOT / "frontend/dist").resolve()
     if dist.is_dir():

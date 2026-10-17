@@ -2,6 +2,12 @@
 
 Phiên bản 1.0 | Ngày 16 tháng 10 năm 2026
 
+> **Cập nhật phạm vi sản phẩm ngày 17/10/2026:** ứng dụng hiện chuyển sang tự học,
+> chỉ có học sinh tự tải lên hoặc nhập đề riêng. Vai trò giáo viên, bộ đề có sẵn,
+> lớp học và quy trình chờ giáo viên chấm không còn thuộc luồng sản phẩm hiện tại.
+> Những phần tương ứng bên dưới được giữ làm tham chiếu thiết kế ban đầu.
+> Phạm vi đã triển khai và hướng dẫn vận hành hiện hành được ghi tại `README.md`.
+
 Tài liệu phục vụ nhóm phát triển phần mềm, giáo viên Ngữ văn và nhóm nghiên cứu khoa học. Hệ thống hướng dẫn học sinh tự xác định cách làm, xây dựng lập luận và phản biện thông qua đối thoại có định hướng. Phạm vi đầu tiên là đọc hiểu và nghị luận xã hội ở một khối THPT; mở rộng nghị luận văn học sau khi có ngữ liệu và rubric được giáo viên kiểm duyệt.
 
 Thiết kế lựa chọn một bộ điều phối sư phạm có trạng thái, kết hợp LLM với quy tắc được thực thi bằng code. Điểm đánh giá phải truy được về bằng chứng của học sinh. Hiệu quả học tập được kiểm chứng bằng bài làm độc lập với AI, tách khỏi điểm do hệ thống tự chấm trong phiên học.

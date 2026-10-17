@@ -17,7 +17,10 @@ describe("FastAPI client", () => {
         new Response(JSON.stringify({ ...extracted, status: "needs_review", error: null })),
       );
     vi.stubGlobal("fetch", fetch);
-    await expect(api.extract(new File(["test"], "de.txt"))).resolves.toEqual(extracted);
+    await expect(api.extract(new File(["test"], "de.txt"))).resolves.toEqual({
+      ...extracted,
+      document_id: "document-one",
+    });
     expect(fetch).toHaveBeenLastCalledWith("/api/documents/document-one", expect.any(Object));
   });
   it("shows worker extraction failures instead of returning empty text", async () => {

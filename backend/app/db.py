@@ -56,7 +56,6 @@ class Database:
     def initialize(self):
         if not self.postgres:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        seed = json.loads(Path(__file__).with_name("seed.json").read_text(encoding="utf-8"))
         with self.connect(write=True) as conn:
             conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
             dialect = "postgres" if self.postgres else "sqlite"
@@ -67,14 +66,13 @@ class Database:
                     if statement.strip():
                         conn.execute(statement)
                 self.execute(conn, "INSERT INTO schema_migrations (version) VALUES (?)", (migration.stem,))
-            for a in reversed(seed["assignments"]):
-                a.update(status="Chưa bắt đầu", progress=0)
-                self.execute(conn, "INSERT INTO documents (collection, id, body) VALUES (?, ?, ?) ON CONFLICT(collection, id) DO NOTHING", ("assignments", a["id"], encode(a)))
-            self.execute(conn, "INSERT INTO documents (collection, id, body) VALUES (?, ?, ?) ON CONFLICT(collection, id) DO NOTHING", ("settings", "rubric", encode({"version": 1, "criteria": seed["rubric"]})))
 
     def check_ready(self):
         with self.connect() as conn:
-            if not self.execute(conn, "SELECT version FROM schema_migrations WHERE version=?", ("001_initial",)).fetchone():
+            dialect = "postgres" if self.postgres else "sqlite"
+            required = {path.stem for path in (Path(__file__).parent / "migrations" / dialect).glob("*.sql")}
+            applied = {row["version"] for row in conn.execute("SELECT version FROM schema_migrations")}
+            if not required.issubset(applied):
                 raise RuntimeError("Database migrations are required")
             conn.execute("SELECT id FROM jobs LIMIT 1")
 

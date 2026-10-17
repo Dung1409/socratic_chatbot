@@ -3,4 +3,4 @@ from .db import Database
 
 if __name__ == "__main__":
     Database.from_env().initialize()
-    print("Database migrations and seed completed.")
+    print("Database migrations completed.")

@@ -3,15 +3,11 @@ export type Assignment = {
   title: string;
   prompt: string;
   target: number;
-  due: string;
-  author: string;
-  grade: string;
-  excerpt: string;
+  document_id: string | null;
+  source: string;
   status: string;
   progress: number;
 };
-export type Criterion = { id: string; name: string; weight: number; desc: string };
-export type Rubric = { version: number; criteria: Criterion[] };
 export type Step = { level: number; q: string; hints: string[] };
 export type Turn =
   | { kind: "tutor"; step: number; text: string; level: number }
@@ -24,15 +20,6 @@ export type Turn =
       quality: number | null;
       hints: number;
     };
-export type Review = {
-  id: string;
-  session_id: string;
-  scores: Record<string, number>;
-  feedback: string;
-  total: number;
-  created_at: string;
-  rubric_version: number;
-};
 export type Session = {
   id: string;
   assignment_id: string;
@@ -45,15 +32,10 @@ export type Session = {
   essay: string;
   turns: Turn[];
   version: number;
-  rubric: Rubric;
   created_at: string;
   updated_at: string;
   submitted_at?: string;
-  student_name: string;
-  student_id: string;
-  class_name: string;
   tutor_mode: string;
-  review: Review | null;
 };
 export type Dashboard = {
   sessions: number;
@@ -61,31 +43,11 @@ export type Dashboard = {
   hints: number;
   hints_per_answer: number;
   submitted: number;
-  pending: number;
   latest_session: Session | null;
-  latest_review: Review | null;
 };
 export type Progress = {
-  series: { week: string; score: number }[];
   bloom_profile: { skill: string; value: number }[];
-  latest: Session | null;
-  pending: number;
-};
-export type Student = {
-  id: string;
-  name: string;
-  cls: string;
-  sessions: number;
-  bloom: number | null;
-  score: number | null;
-  trend: string;
-  hints: number;
-};
-export type Overview = {
-  students: Student[];
-  sessions: number;
-  pending: number;
-  distribution: { b: string; n: number }[];
+  sessions: Session[];
 };
 
 export class ApiError extends Error {
@@ -129,7 +91,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
-type ExtractedDocument = { filename: string; title: string; text: string };
+type ExtractedDocument = { filename: string; title: string; text: string; document_id?: string };
 type PendingDocument = { document_id: string; job_id: string; status: string };
 type DocumentStatus = PendingDocument & {
   filename: string;
@@ -144,8 +106,7 @@ export const api = {
     title: string;
     prompt: string;
     target: number;
-    due?: string;
-    excerpt?: string;
+    document_id?: string;
   }) => post<Assignment>("/assignments", body),
   extract: async (file: File): Promise<ExtractedDocument> => {
     const data = new FormData();
@@ -154,11 +115,16 @@ export const api = {
       method: "POST",
       body: data,
     });
-    if (!("document_id" in result)) return result;
+    if ("text" in result) return result;
     for (let attempt = 0; attempt < 240; attempt++) {
       const document = await request<DocumentStatus>(`/documents/${result.document_id}`);
       if (document.status === "needs_review" && document.text !== null) {
-        return { filename: document.filename, title: document.title, text: document.text };
+        return {
+          filename: document.filename,
+          title: document.title,
+          text: document.text,
+          document_id: result.document_id,
+        };
       }
       if (document.status === "failed") {
         throw new ApiError(document.error || "Không trích xuất được văn bản từ tệp.", 422);
@@ -167,12 +133,8 @@ export const api = {
     }
     throw new ApiError("Tệp vẫn đang được xử lý. Em có thể nhập đề trực tiếp trong lúc chờ.", 504);
   },
-  rubric: () => request<Rubric>("/rubric"),
-  saveRubric: (criteria: Criterion[]) =>
-    request<Rubric>("/rubric", { method: "PUT", body: JSON.stringify({ criteria }) }),
   dashboard: () => request<Dashboard>("/dashboard"),
   progress: () => request<Progress>("/progress"),
-  overview: () => request<Overview>("/teacher/overview"),
   sessions: () => request<Session[]>("/sessions"),
   session: (id: string) => request<Session>(`/sessions/${id}`),
   start: (id: string) => post<Session>("/sessions", { assignment_id: id }),
@@ -193,6 +155,4 @@ export const api = {
       expected_version: session.version,
       client_message_id: key,
     }),
-  review: (id: string, scores: Record<string, number>, feedback: string) =>
-    post<Session>(`/sessions/${id}/reviews`, { scores, feedback }),
 };

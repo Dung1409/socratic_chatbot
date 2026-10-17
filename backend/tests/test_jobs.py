@@ -33,6 +33,22 @@ def test_background_upload_survives_api_restart(database, tmp_path, monkeypatch)
         assert result["text"] == TEXT
         assert "storage_key" not in result
         assert api.get("/api/documents/missing").status_code == 404
+        confirmed = api.post("/api/assignments", json={
+            "title": "Đề tự học đã xác nhận", "prompt": TEXT, "document_id": document_id,
+        })
+        assert confirmed.status_code == 201
+        assert confirmed.json()["document_id"] == document_id
+        assert confirmed.json()["source"] == "student"
+
+
+def test_cannot_confirm_a_document_before_worker_finishes(database, tmp_path):
+    storage = tmp_path / "uploads"
+    pending = JobQueue(database, storage).submit("de.txt", TEXT.encode())
+    with TestClient(create_app(database.path, storage_path=storage)) as api:
+        body = {"title": "Đề chưa trích xuất", "prompt": TEXT, "document_id": pending["document_id"]}
+        assert api.post("/api/assignments", json=body).status_code == 409
+        body["document_id"] = "missing"
+        assert api.post("/api/assignments", json=body).status_code == 404
 
 
 def test_only_one_worker_claims_a_job(queue):

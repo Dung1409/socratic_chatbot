@@ -13,9 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as DeBaiRouteImport } from './routes/de-bai'
 import { Route as PhienHocRouteImport } from './routes/phien-hoc'
 import { Route as TienTrinhRouteImport } from './routes/tien-trinh'
-import { Route as GiaoVienIndexRouteImport } from './routes/giao-vien/index'
-import { Route as GiaoVienDanhGiaRouteImport } from './routes/giao-vien/danh-gia'
-import { Route as GiaoVienRubricRouteImport } from './routes/giao-vien/rubric'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -37,39 +34,18 @@ const TienTrinhRoute = TienTrinhRouteImport.update({
   path: '/tien-trinh',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GiaoVienIndexRoute = GiaoVienIndexRouteImport.update({
-  id: '/giao-vien/',
-  path: '/giao-vien/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GiaoVienDanhGiaRoute = GiaoVienDanhGiaRouteImport.update({
-  id: '/giao-vien/danh-gia',
-  path: '/giao-vien/danh-gia',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GiaoVienRubricRoute = GiaoVienRubricRouteImport.update({
-  id: '/giao-vien/rubric',
-  path: '/giao-vien/rubric',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
-  '/giao-vien/danh-gia': typeof GiaoVienDanhGiaRoute
-  '/giao-vien/rubric': typeof GiaoVienRubricRoute
-  '/giao-vien/': typeof GiaoVienIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
-  '/giao-vien/danh-gia': typeof GiaoVienDanhGiaRoute
-  '/giao-vien/rubric': typeof GiaoVienRubricRoute
-  '/giao-vien': typeof GiaoVienIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -77,38 +53,13 @@ export interface FileRoutesById {
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
-  '/giao-vien/danh-gia': typeof GiaoVienDanhGiaRoute
-  '/giao-vien/rubric': typeof GiaoVienRubricRoute
-  '/giao-vien/': typeof GiaoVienIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/de-bai'
-    | '/phien-hoc'
-    | '/tien-trinh'
-    | '/giao-vien/danh-gia'
-    | '/giao-vien/rubric'
-    | '/giao-vien/'
+  fullPaths: '/' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/de-bai'
-    | '/phien-hoc'
-    | '/tien-trinh'
-    | '/giao-vien/danh-gia'
-    | '/giao-vien/rubric'
-    | '/giao-vien'
-  id:
-    | '__root__'
-    | '/'
-    | '/de-bai'
-    | '/phien-hoc'
-    | '/tien-trinh'
-    | '/giao-vien/danh-gia'
-    | '/giao-vien/rubric'
-    | '/giao-vien/'
+  to: '/' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
+  id: '__root__' | '/' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -116,9 +67,6 @@ export interface RootRouteChildren {
   DeBaiRoute: typeof DeBaiRoute
   PhienHocRoute: typeof PhienHocRoute
   TienTrinhRoute: typeof TienTrinhRoute
-  GiaoVienDanhGiaRoute: typeof GiaoVienDanhGiaRoute
-  GiaoVienRubricRoute: typeof GiaoVienRubricRoute
-  GiaoVienIndexRoute: typeof GiaoVienIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -151,27 +99,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TienTrinhRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/giao-vien/': {
-      id: '/giao-vien/'
-      path: '/giao-vien'
-      fullPath: '/giao-vien/'
-      preLoaderRoute: typeof GiaoVienIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/giao-vien/danh-gia': {
-      id: '/giao-vien/danh-gia'
-      path: '/giao-vien/danh-gia'
-      fullPath: '/giao-vien/danh-gia'
-      preLoaderRoute: typeof GiaoVienDanhGiaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/giao-vien/rubric': {
-      id: '/giao-vien/rubric'
-      path: '/giao-vien/rubric'
-      fullPath: '/giao-vien/rubric'
-      preLoaderRoute: typeof GiaoVienRubricRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -180,9 +107,6 @@ const rootRouteChildren: RootRouteChildren = {
   DeBaiRoute: DeBaiRoute,
   PhienHocRoute: PhienHocRoute,
   TienTrinhRoute: TienTrinhRoute,
-  GiaoVienDanhGiaRoute: GiaoVienDanhGiaRoute,
-  GiaoVienRubricRoute: GiaoVienRubricRoute,
-  GiaoVienIndexRoute: GiaoVienIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

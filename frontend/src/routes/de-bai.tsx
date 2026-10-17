@@ -10,10 +10,11 @@ import { ApiState } from "@/components/ApiState";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { seo } from "@/lib/seo";
+import { BLOOM } from "@/lib/data";
 
 export const Route = createFileRoute("/de-bai")({
   head: () =>
-    seo("Đề bài của tôi", "Tải đề bài Ngữ văn và bắt đầu phiên học cùng gia sư Socratic."),
+    seo("Đề bài của tôi", "Tải lên hoặc nhập đề Ngữ văn của bạn để tự học cùng gia sư Socratic."),
   component: Page,
 });
 
@@ -22,6 +23,8 @@ function Page() {
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [documentId, setDocumentId] = useState<string | undefined>();
+  const [target, setTarget] = useState(4);
   const query = useQuery({ queryKey: ["assignments"], queryFn: api.assignments });
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -37,6 +40,7 @@ function Page() {
       setFile(result.filename);
       setTitle(result.title);
       setText(result.text);
+      setDocumentId(result.document_id);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không đọc được tệp");
     } finally {
@@ -50,7 +54,8 @@ function Page() {
       const result = await api.createAssignment({
         title: title.trim(),
         prompt: text.trim(),
-        target: 4,
+        target,
+        ...(documentId ? { document_id: documentId } : {}),
       });
       await client.invalidateQueries({ queryKey: ["assignments"] });
       await navigate({ to: "/phien-hoc", search: { assignment: result.id } });
@@ -65,20 +70,25 @@ function Page() {
       <PageHeader
         eyebrow="Học sinh"
         title="Đề bài của tôi"
-        desc="Chọn đề bài giáo viên đã giao hoặc tải lên đề bài riêng để luyện tập."
+        desc="Tải lên hoặc nhập đề riêng, kiểm tra nội dung và bắt đầu tự học."
       />
       <div className="p-6 lg:p-10 grid gap-6 xl:grid-cols-3">
         <div className="xl:col-span-2 space-y-4">
           {query.isPending || query.error ? (
             <ApiState loading={query.isPending} error={query.error} retry={query.refetch} />
+          ) : query.data?.length === 0 ? (
+            <Panel title="Chưa có đề tự học">
+              <p className="text-sm text-muted-foreground">
+                Thêm đề đầu tiên bằng cách tải tệp hoặc nhập nội dung trong biểu mẫu bên cạnh. Đề
+                chỉ được lưu sau khi bạn xác nhận nội dung.
+              </p>
+            </Panel>
           ) : (
             query.data?.map((a) => (
               <Panel key={a.id}>
                 <div className="flex flex-col md:flex-row gap-5">
                   <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span>{a.author}</span>·<span>{a.grade}</span>·<span>Hạn {a.due}</span>
-                    </div>
+                    <p className="text-xs text-muted-foreground">Đề tự học của bạn</p>
                     <h3 className="font-semibold mt-1">{a.title}</h3>
                     <p className="text-sm text-foreground/80 mt-2">{a.prompt}</p>
                     <div className="mt-3 flex items-center gap-2 text-xs">
@@ -90,16 +100,13 @@ function Page() {
                     <span className="text-xs rounded-full bg-muted px-2.5 py-1">{a.status}</span>
                     <Button
                       asChild
-                      variant={a.status === "Đã nộp" ? "outline" : "default"}
+                      variant={a.status === "Đã hoàn thành" ? "outline" : "default"}
                       size="sm"
                     >
-                      {a.status === "Đã nộp" ? (
-                        <Link to="/tien-trinh">Xem kết quả</Link>
-                      ) : (
-                        <Link to="/phien-hoc" search={{ assignment: a.id }}>
-                          Học với gia sư <ArrowRight />
-                        </Link>
-                      )}
+                      <Link to="/phien-hoc" search={{ assignment: a.id }}>
+                        {a.status === "Đã hoàn thành" ? "Xem lại phiên học" : "Học với gia sư"}{" "}
+                        <ArrowRight />
+                      </Link>
                     </Button>
                   </div>
                 </div>
@@ -107,7 +114,7 @@ function Page() {
             ))
           )}
         </div>
-        <Panel title="Tải đề bài lên">
+        <Panel title="Thêm đề tự học">
           <label
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
@@ -173,6 +180,20 @@ function Page() {
                 maxLength={30000}
               />
             </label>
+            <label className="block text-sm font-medium">
+              Mục tiêu luyện tập
+              <select
+                className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                value={target}
+                onChange={(event) => setTarget(Number(event.target.value))}
+              >
+                {BLOOM.map((bloom) => (
+                  <option key={bloom.level} value={bloom.level}>
+                    Bloom {bloom.level} · {bloom.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <Button
               className="w-full"
               type="submit"
@@ -182,8 +203,8 @@ function Page() {
             </Button>
           </form>
           <div className="mt-6 text-xs text-muted-foreground leading-relaxed">
-            Đề tự tải lên dùng mục tiêu Bloom 4. Bản demo đặt câu hỏi theo kịch bản; chưa hỗ trợ OCR
-            ảnh chụp hoặc tự phân tích đề bằng AI.
+            Bạn chọn mục tiêu luyện tập cho từng đề. Gia sư hiện đặt câu hỏi theo kịch bản; chưa hỗ
+            trợ OCR ảnh chụp hoặc tự phân tích đề bằng AI.
           </div>
         </Panel>
       </div>

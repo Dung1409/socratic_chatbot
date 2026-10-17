@@ -19,6 +19,8 @@ QUESTION = re.compile(
     r"\s*(?:[:.)\-–]\s*)?(.*)$",
     re.IGNORECASE,
 )
+INLINE_QUESTION = re.compile(r"(?<=[.!?])\s+(?=(?:Câu|Bài)\s*(?:\d{1,3}|[Šš])\s*[.):])")
+OCR_QUESTION_NUMBER = re.compile(r"^(\s*(?:Câu|Bài)\s*)[Šš](?=\s*[.):])")
 IDEA = re.compile(r"^\s*(?:\(([a-h])\)|([a-h])[.)])\s+(.+)$", re.IGNORECASE)
 ANSWER_KEY = re.compile(r"^\s*(?:ĐÁP ÁN|HƯỚNG DẪN CHẤM|GỢI Ý ĐÁP ÁN|THANG ĐIỂM)\b", re.IGNORECASE)
 PAGE_NUMBER = re.compile(r"(?:trang|page)\s*(\d{1,3})(?:\s*(?:/|trên|of)\s*\d{1,3})?\s*$", re.IGNORECASE)
@@ -113,6 +115,13 @@ def _source_lines(text, pages):
             yield {"text": raw, "page": None}
 
 
+def _question_source_lines(lines):
+    """Recover question boundaries lost when OCR joins two lines."""
+    for line in lines:
+        for value in INLINE_QUESTION.split(line["text"]):
+            yield {**line, "text": OCR_QUESTION_NUMBER.sub(r"\g<1>5", value)}
+
+
 def _repeated_edges(pages):
     if not pages or len(pages) < 2:
         return set()
@@ -197,7 +206,7 @@ def structure_text(text: str, pages: list | None = None) -> dict:
     warnings = _page_order_warnings(pages)
     repeated = _repeated_edges(pages)
     printed_pages = _printed_page_lines(pages)
-    source_lines = list(_source_lines(text, pages))
+    source_lines = list(_question_source_lines(_source_lines(text, pages)))
     footnotes, footnote_lines = _extract_footnotes(source_lines)
     current_part = None
     current_question = None

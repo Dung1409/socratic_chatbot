@@ -63,6 +63,17 @@ def test_multiline_question_stem_is_not_lost():
     assert "Và nêu cảm nhận" in question["context"]
 
 
+def test_ocr_question_five_marker_inside_previous_question_line():
+    text = ("I. ĐỌC HIỂU (4,0 điểm)\n"
+            "Câu 4. Nhận xét về mồi liên hệ giữa luận đề và các luận điểm trong văn bản. "
+            "Câu Š. Trong bối cảnh cần có những đột phả về khoa học công nghệ hiện nay, "
+            "từ góc nhìn của người trẻ, cần sử dụng trí tuệ nhân tạo (AI) như thế nào?")
+    questions = structure_text(text)["parts"][0]["questions"]
+    assert [question["label"] for question in questions] == ["Câu 4", "Câu 5"]
+    assert "Câu Š" not in questions[0]["text"]
+    assert "Trong bối cảnh" in questions[1]["text"]
+
+
 def test_ocr_graduation_exam_is_split_into_two_sections_and_seven_questions():
     ocr = """BỘ GIÁO DỤC VÀ ĐÀO TẠO KY THỊ TOT NGHIỆP TRUNG HQC PHO THONG NĂM 2026
 DE THI CHÍNH THUC Môn thi: NGỮ VAN

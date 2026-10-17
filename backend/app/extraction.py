@@ -145,6 +145,34 @@ def _ocr_image(image) -> tuple[str, float | None]:
     def accent_count(value: str) -> int:
         return sum(unicodedata.category(char) == "Mn" for char in unicodedata.normalize("NFD", value))
 
+    def verified_number(index: int, value: str, confidence: float) -> str:
+        """Check uncertain numerals on their own pixels with digit-only OCR."""
+        numeric = re.fullmatch(r"(\d{1,6})([.,):]*)", value)
+        after_question_label = bool(line_words and plain(line_words[-1]).rstrip(".") in {"CAU", "BAI"})
+        ambiguous_label_number = (after_question_label and bool(re.fullmatch(r"\D{1,3}[.):]", value)))
+        if numeric is None and not ambiguous_label_number:
+            return value
+        if numeric is not None and confidence >= 95:
+            return value
+        left, top = words["left"][index], words["top"][index]
+        right = left + words["width"][index]
+        bottom = top + words["height"][index]
+        crop = prepared.crop((max(0, left - 8), max(0, top - 8),
+                              min(prepared.width, right + 8), min(prepared.height, bottom + 8)))
+        try:
+            reads = [pytesseract.image_to_string(
+                crop, lang="eng", config=f"--psm {psm} -c tessedit_char_whitelist=0123456789",
+                timeout=5).strip() for psm in (7, 8)]
+        except (pytesseract.TesseractError, RuntimeError):
+            return value
+        if reads[0] != reads[1] or not reads[0].isdigit():
+            return value
+        if numeric is not None:
+            if len(reads[0]) != len(numeric.group(1)):
+                return value
+            return reads[0] + numeric.group(2)
+        return reads[0] + value[len(value.rstrip(".,):")):]
+
     def flush():
         if line_words:
             value = " ".join(line_words)
@@ -183,6 +211,7 @@ def _ocr_image(image) -> tuple[str, float | None]:
         key = (words["block_num"][index], words["par_num"][index], words["line_num"][index])
         if current_key is not None and key != current_key:
             flush()
+        value = verified_number(index, value, confidence)
         current_key = key
         line_words.append(value)
         line_indexes.append(index)

@@ -357,7 +357,27 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     @app.post("/api/sessions", tags=["Sessions"])
     def start_session(body: SessionInput, user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            assignment = require(conn, "assignments", body.assignment_id, user.id)
+            assignment = Database.get(conn, "assignments", body.assignment_id, owner_id=user.id)
+            # Multi-question assignments live in the relational learning tables, while
+            # the existing session UI still calls this legacy endpoint. Build a
+            # compatible read model so selecting several questions does not end in 404.
+            if assignment is None:
+                row = db.execute(conn, "SELECT * FROM assignments WHERE id=? AND owner_id=?",
+                                 (body.assignment_id, user.id)).fetchone()
+                if row is not None:
+                    items = db.execute(conn, """SELECT label, prompt, context, item_order
+                        FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
+                                       (body.assignment_id,)).fetchall()
+                    assignment = {
+                        "id": row["id"], "title": row["title"],
+                        "prompt": "\n\n".join(
+                            f"{item['label']}: {item['prompt']}" for item in items),
+                        "source_text": row["source_text"], "source": "student",
+                        "target": 4, "status": "Chưa bắt đầu",
+                    }
+                    Database.put(conn, "assignments", body.assignment_id, assignment, user.id)
+            if assignment is None:
+                raise HTTPException(404, "Không tìm thấy dữ liệu")
             existing = next((s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id), None)
         if existing:
             return public_session(existing)

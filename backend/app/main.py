@@ -381,6 +381,13 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 raise HTTPException(404, "Không tìm thấy dữ liệu")
             existing = next((s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id), None)
         if existing:
+            with db.connect() as conn:
+                items = db.execute(conn, """SELECT id, label, prompt, context, item_type
+                    FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
+                                   (body.assignment_id,)).fetchall()
+            if items:
+                existing["assignment"]["items"] = [dict(item) for item in items]
+                existing["assignment"].setdefault("active_item_id", items[0]["id"])
             return public_session(existing)
         if assignment.get("source") == "legacy_seed":
             raise HTTPException(404, "Hãy tải lên hoặc nhập đề riêng để bắt đầu tự học")

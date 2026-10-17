@@ -234,6 +234,27 @@ def classify_document(text: str, filename: str = "") -> str:
     return "reference_document"
 
 
+def detect_subject(text: str, filename: str = "") -> str:
+    """Detect a conservative subject hint; it never replaces user confirmation."""
+    folded = unicodedata.normalize("NFD", (text + " " + filename).upper())
+    folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")
+    markers = {
+        "ngữ văn": ("NGU VAN", "DOC HIEU", "NGHI LUAN", "BAI THO", "THO"),
+        "toán": ("TOAN", "PHUONG TRINH", "HAM SO", "HINH HOC", "TICH PHAN"),
+        "vật lý": ("VAT LY", "CO HOC", "DIEN XOAY CHIEU", "QUANG HOC"),
+        "hóa học": ("HOA HOC", "PHAN UNG HOA HOC", "OXI HOA", "ESTE"),
+        "sinh học": ("SINH HOC", "DI TRUYEN", "TE BAO", "SINH THAI"),
+        "lịch sử": ("LICH SU", "SU KIEN", "KHOI NGHIA", "CHIEN TRANH"),
+        "địa lý": ("DIA LY", "KHI HAU", "DAN SO", "DIA HINH"),
+        "tiếng Anh": ("ENGLISH", "READING", "GRAMMAR", "LISTENING", "VOCABULARY"),
+        "tin học": ("TIN HOC", "LAP TRINH", "THUAT TOAN", "PYTHON", "HTML"),
+    }
+    for subject, candidates in markers.items():
+        if any(candidate in folded for candidate in candidates):
+            return subject
+    return "chưa xác định"
+
+
 def _content_blocks(pages: list[dict]) -> list[dict]:
     """Create small, provenance-aware blocks for non-exam documents too."""
     blocks = []
@@ -298,7 +319,8 @@ def extract_document(filename: str, data: bytes) -> dict:
         warnings.extend(f"{page['label']} OCR chưa chắc chắn; cần xem lại chữ."
                         for page in pages if page["confidence"] is not None and page["confidence"] < 65)
         return {"text": text, "pages": pages, "blocks": _content_blocks(pages),
-                "warnings": warnings, "document_type": classify_document(text, filename)}
+                "warnings": warnings, "document_type": classify_document(text, filename),
+                "subject": detect_subject(text, filename)}
     except ExtractionError:
         raise
     except Exception as exc:

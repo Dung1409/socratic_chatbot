@@ -216,7 +216,7 @@ export type DocumentStructure = {
 };
 type ExtractedDocument = {
   filename: string; title: string; text: string; document_id?: string;
-  structure?: DocumentStructure; pages?: SourcePage[]; blocks?: ContentBlock[]; warnings?: string[]; document_type?: string;
+  structure?: DocumentStructure; pages?: SourcePage[]; blocks?: ContentBlock[]; warnings?: string[]; document_type?: string; subject?: string;
 };
 export type ContentBlock = {
   id: string; type: "heading" | "paragraph" | "list_item" | string;
@@ -233,6 +233,7 @@ type DocumentStatus = PendingDocument & {
   blocks?: ContentBlock[];
   extraction_warnings?: string[];
   document_type?: string;
+  subject?: string;
 };
 
 export const api = {
@@ -260,6 +261,7 @@ export const api = {
           ...(document.pages ? { pages: document.pages } : {}),
           ...(document.blocks ? { blocks: document.blocks } : {}),
           ...(document.document_type ? { document_type: document.document_type } : {}),
+          ...(document.subject ? { subject: document.subject } : {}),
           ...(document.extraction_warnings ? { warnings: document.extraction_warnings } : {}) };
       }
       if (document.status === "failed") {

@@ -38,6 +38,7 @@ function Page() {
   const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([]);
   const [selectedBlockId, setSelectedBlockId] = useState("");
   const [documentType, setDocumentType] = useState("reference_document");
+  const [subject, setSubject] = useState("chưa xác định");
   const [images, setImages] = useState<ImageItem[]>([]);
   const [imageCache, setImageCache] = useState<Record<string, SourcePage>>({});
   const [busy, setBusy] = useState(false);
@@ -72,6 +73,7 @@ function Page() {
       setContentBlocks(result.blocks ?? []);
       setSelectedBlockId("");
       setDocumentType(result.document_type ?? "reference_document");
+      setSubject(result.subject ?? "chưa xác định");
       applyStructure(result.structure ?? await api.structure(result.text, result.pages));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không đọc được tệp");
@@ -100,6 +102,7 @@ function Page() {
       setContentBlocks([]);
       setSelectedBlockId("");
       setDocumentType("reference_document");
+      setSubject("chưa xác định");
       setSelectedId("");
       setPrompt("");
       setTitle("Đề từ ảnh của em");
@@ -157,6 +160,7 @@ function Page() {
       }] : []));
       setSelectedBlockId("");
       setDocumentType("image_note");
+      setSubject("chưa xác định");
       applyStructure(parsed);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không đọc được bộ ảnh");
@@ -306,7 +310,7 @@ function Page() {
                 <span className="truncate">{file}</span>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Đã trích xuất văn bản ({documentType}). Em hãy kiểm tra và chỉnh sửa trước khi bắt đầu.
+                Đã trích xuất văn bản · {subject} · {documentType}. Em hãy kiểm tra và chỉnh sửa trước khi bắt đầu.
               </p>
             </div>
           )}

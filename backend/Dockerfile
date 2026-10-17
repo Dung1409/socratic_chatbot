@@ -20,13 +20,15 @@ RUN chmod 644 /usr/share/tesseract-ocr/5/tessdata/vie.traineddata
 COPY requirements.txt ./backend/requirements.txt
 # VietOCR uses PyTorch for inference. Install the CPU wheel explicitly so the
 # image does not pull CUDA libraries into the OCR worker.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.7.1
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.7.1 torchvision==0.22.1
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
+ENV HOME=/home/app
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --no-create-home app \
-    && mkdir -p /app/backend/data /app/storage \
-    && chown app:app /app/backend/data /app/storage
+    && mkdir -p /app/backend/data /app/storage /home/app \
+    && chown -R app:app /app/backend/data /app/storage /home/app
 
 COPY --chown=app:app app/ ./backend/app/
 

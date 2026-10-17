@@ -6,7 +6,13 @@ async function register(page: Page, email: string, name: string) {
   await page.getByRole("textbox", { name: "Email", exact: true }).fill(email);
   await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
   await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill("Strong test password 123");
+  const registered = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/register") && response.request().method() === "POST",
+    { timeout: 15000 },
+  );
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
+  expect((await registered).status()).toBe(201);
   await expect(
     page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
   ).toBeVisible();
@@ -27,14 +33,16 @@ test("start from an empty workspace, study a personal assignment and save the fi
   await expect.poll(async () => (await page.request.get("/api/sessions")).json()).toEqual([]);
 
   await page.getByRole("link", { name: "Thêm đề tự học", exact: true }).click();
+  await page.getByRole("button", { name: "Tạo đề bài", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Tên đề", exact: true })
     .fill("Tự học về ý nghĩa của đọc sách");
   await page
     .getByRole("textbox", { name: "Nội dung đề", exact: true })
     .fill("Hãy trình bày quan điểm về ý nghĩa của việc đọc sách và đưa ra dẫn chứng cụ thể.");
-  await page.getByLabel("Mục tiêu luyện tập").selectOption("6");
-  await page.getByRole("button", { name: "Xác nhận đề & bắt đầu học" }).click();
+  await page.getByRole("button", { name: "Tiếp tục", exact: true }).click();
+  await page.getByLabel("Dạng bài").selectOption("social");
+  await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
   await expect(page.getByRole("heading", { name: "Tự học về ý nghĩa của đọc sách" })).toBeVisible();
   await page.getByRole("button", { name: "Gợi ý mức 1 · Định hướng" }).click();
   await expect(page.getByText("Đọc lại yêu cầu và chọn một ý để tập trung trả lời.")).toBeVisible();
@@ -68,6 +76,14 @@ test("start from an empty workspace, study a personal assignment and save the fi
   await expect(page.getByText("Chờ đánh giá", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Xem lại đối thoại" }).click();
   await expect(page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" })).toBeVisible();
+  const completedSessions = await (await page.request.get("/api/sessions")).json();
+  await page.goto("/de-bai");
+  await expect(page.getByRole("button", { name: "Hoàn thành 1", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Xem kết quả", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" })).toBeVisible();
+  expect((await (await page.request.get("/api/sessions")).json())[0].id).toBe(
+    completedSessions[0].id,
+  );
   await page.goto("/giao-vien");
   await expect(page.getByRole("heading", { name: "Không tìm thấy trang" })).toBeVisible();
   expect(errors).toEqual([]);
@@ -77,6 +93,7 @@ test("upload, edit extracted text before confirmation and navigate on mobile", a
   await register(page, "second-student@example.com", "Bạn thứ hai");
   await page.goto("/de-bai");
   const before = await (await page.request.get("/api/assignments")).json();
+  await page.getByRole("button", { name: "Tạo đề bài", exact: true }).click();
   await page.getByLabel("Chọn tệp đề bài").setInputFiles({
     name: "De-luyen-tap.txt",
     mimeType: "text/plain",
@@ -90,8 +107,9 @@ test("upload, edit extracted text before confirmation and navigate on mobile", a
   const edited =
     "Viết đoạn văn về trách nhiệm của tuổi trẻ với cộng đồng, có dẫn chứng và phản biện.";
   await page.getByRole("textbox", { name: "Nội dung đề", exact: true }).fill(edited);
-  await page.getByLabel("Mục tiêu luyện tập").selectOption("3");
-  await page.getByRole("button", { name: "Xác nhận đề & bắt đầu học" }).click();
+  await page.getByRole("button", { name: "Tiếp tục", exact: true }).click();
+  await page.getByLabel("Dạng bài").selectOption("social");
+  await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
   await expect(page.getByRole("heading", { name: "Đề riêng về trách nhiệm" })).toBeVisible();
   await expect(page.getByText(edited, { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

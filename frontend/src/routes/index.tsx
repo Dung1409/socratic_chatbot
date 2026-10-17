@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, BookOpen, Clock, Lightbulb, Target } from "lucide-react";
-import { PageHeader, Panel, BloomBadge } from "@/components/AppShell";
+import { PageHeader, Panel } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { ApiState } from "@/components/ApiState";
@@ -64,7 +64,17 @@ function Index() {
               <div className="space-y-4">
                 <h2 className="text-lg font-semibold">{current.title}</h2>
                 <p className="text-sm text-foreground/80 whitespace-pre-wrap">{current.prompt}</p>
-                <BloomBadge level={current.target} />
+                <p className="text-xs text-secondary">
+                  {current.task_type === "reading" ? "Đọc hiểu" : "Nghị luận xã hội"} · Socratic ×
+                  Bloom
+                </p>
+                {stats.latest_session?.assessment && (
+                  <p className="text-sm font-medium">
+                    {stats.latest_session.assessment.classification
+                      ? `${stats.latest_session.assessment.classification} · S = ${stats.latest_session.assessment.score}/100`
+                      : "Phiên gần nhất chưa đủ bằng chứng để tính điểm tổng"}
+                  </p>
+                )}
                 <div>
                   <Button asChild>
                     <Link to="/phien-hoc" search={{ assignment: current.id }}>

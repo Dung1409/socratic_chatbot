@@ -20,6 +20,7 @@ import { BLOOM, bloomColor } from "@/lib/data";
 import { seo } from "@/lib/seo";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/AuthProvider";
+import { AdaptiveSessionView } from "@/components/AdaptiveSessionView";
 
 export const Route = createFileRoute("/phien-hoc")({
   validateSearch: (search: Record<string, unknown>): { assignment?: string } =>
@@ -48,6 +49,8 @@ function Session() {
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
     retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.pending_action?.status === "processing" ? 2000 : false,
   });
   if (query.isPending || query.isError)
     return <ApiState loading={query.isPending} error={query.error} retry={query.refetch} />;
@@ -63,7 +66,11 @@ function Session() {
         </Button>
       </div>
     );
-  return <SessionView key={query.data.id} session={query.data} queryKey={queryKey} />;
+  return query.data.tutor_mode === "openai" ? (
+    <AdaptiveSessionView key={query.data.id} session={query.data} queryKey={queryKey} />
+  ) : (
+    <SessionView key={query.data.id} session={query.data} queryKey={queryKey} />
+  );
 }
 
 function SessionView({ session, queryKey }: { session: SavedSession; queryKey: string[] }) {

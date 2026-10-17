@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { ApiState } from "@/components/ApiState";
 import { seo } from "@/lib/seo";
+import { AssessmentReport } from "@/components/AssessmentReport";
 
 export const Route = createFileRoute("/tien-trinh")({
   head: () =>
@@ -59,7 +60,8 @@ function Page() {
             </ResponsiveContainer>
           </div>
           <p className="text-xs text-muted-foreground">
-            Biểu đồ thể hiện hoạt động luyện tập, chưa phải điểm năng lực hoặc đánh giá tự động.
+            Biểu đồ đếm câu trả lời theo bậc câu hỏi, không phải điểm năng lực. Điểm đánh giá và
+            bằng chứng được trình bày riêng trong báo cáo mỗi phiên bên dưới.
           </p>
         </Panel>
         <Panel title="Tự đối chiếu sau mỗi phiên">
@@ -105,6 +107,18 @@ function Page() {
                     <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
                       {session.essay}
                     </p>
+                  </details>
+                )}
+                {session.assessment && (
+                  <details className="mb-4">
+                    <summary className="cursor-pointer text-sm font-medium text-primary">
+                      {session.assessment.classification
+                        ? `${session.assessment.classification} · Điểm tư duy ${session.assessment.score}/100`
+                        : "Báo cáo: chưa đủ bằng chứng để tính điểm tổng"}
+                    </summary>
+                    <div className="mt-3">
+                      <AssessmentReport report={session.assessment} />
+                    </div>
                   </details>
                 )}
                 <Button asChild variant="outline" size="sm">

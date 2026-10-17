@@ -108,6 +108,19 @@ export type Dashboard = {
 export type Progress = {
   bloom_profile: { skill: string; value: number }[];
   sessions: Session[];
+  assignments: {
+    id: string;
+    title: string;
+    created_at: string;
+    items: {
+      id: string;
+      order: number;
+      label: string;
+      prompt: string;
+      source_only: boolean;
+      session_id: string | null;
+    }[];
+  }[];
 };
 
 export type AuthUser = { id: string; email: string; display_name: string };
@@ -292,8 +305,33 @@ type DocumentStatus = PendingDocument & {
   document_type?: string;
   subject?: string;
 };
+export type DocumentHistoryItem = {
+  document_id: string;
+  filename: string;
+  title: string;
+  status: string;
+  created_at?: number;
+  updated_at?: number;
+  document_type?: string;
+  subject?: string;
+  page_count: number;
+  part_count: number;
+  question_count: number;
+  warning_count: number;
+  groups: { id: string; label: string; text: string; question_ids: string[]; question_labels: string[] }[];
+};
+export type DocumentDetail = DocumentHistoryItem & {
+  text: string | null;
+  structure?: DocumentStructure | null;
+  pages?: SourcePage[];
+  blocks?: ContentBlock[];
+  extraction_warnings?: string[];
+  error?: string | null;
+};
 
 export const api = {
+  documents: () => request<DocumentHistoryItem[]>("/documents"),
+  document: (id: string) => request<DocumentDetail>(`/documents/${id}`),
   assignments: () => request<Assignment[]>("/assignments"),
   createAssignment: (body: {
     title: string;

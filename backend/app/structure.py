@@ -52,6 +52,15 @@ def _is_exam_header(value: str) -> bool:
                               "SO BAO DANH", "MON THI:"))
 
 
+def _is_source_instruction(value: str) -> bool:
+    """Recognize a standalone direction introducing material, not the material itself."""
+    folded = _fold(value).strip()
+    return bool(re.fullmatch(
+        r"(?:DOC|QUAN SAT|XEM|NGHIEN CUU|THEO DOI|DUA VAO|CHO|THUC HIEN|TRA LOI)\s+.{1,90}"
+        r"(?:[:：]|\bSAU\b|\bDUOI DAY\b)\s*", folded,
+    ))
+
+
 def _text(lines):
     return "\n".join(item["text"] for item in lines).strip()
 
@@ -254,6 +263,8 @@ def structure_text(text: str, pages: list | None = None) -> dict:
             parts.append(current_part)
             current_question = None
             current_idea = None
+            continue
+        if exam_layout and current_part is not None and current_question is None and _is_source_instruction(stripped):
             continue
         question = QUESTION.match(stripped)
         if question:

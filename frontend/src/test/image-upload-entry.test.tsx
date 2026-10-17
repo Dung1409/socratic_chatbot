@@ -3,12 +3,16 @@ import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/rea
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { api } from "@/lib/api";
+import { api, authApi } from "@/lib/api";
 import { routeTree } from "@/routeTree.gen";
 
 afterEach(() => vi.restoreAllMocks());
 
 it("shows a visible action for uploading images on the student assignment page", async () => {
+  vi.spyOn(authApi, "session").mockResolvedValue({
+    user: { id: "student-1", email: "student@example.com", display_name: "Student" },
+    csrf_token: "test-csrf",
+  });
   vi.spyOn(api, "assignments").mockResolvedValue([]);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createRouter({
@@ -23,8 +27,8 @@ it("shows a visible action for uploading images on the student assignment page",
     </QueryClientProvider>,
   );
 
-  const imageButton = await screen.findByRole("button", { name: "Chọn ảnh đề bài" });
-  const imageInput = screen.getByLabelText("Chọn ảnh đề bài") as HTMLInputElement;
+  const imageButton = await screen.findByRole("button", { name: "Chọn ảnh tài liệu" });
+  const imageInput = screen.getByLabelText("Chọn ảnh tài liệu") as HTMLInputElement;
   const openPicker = vi.spyOn(imageInput, "click");
   expect(imageButton).toBeVisible();
   expect(imageInput).toHaveAttribute("multiple");
@@ -35,6 +39,10 @@ it("shows a visible action for uploading images on the student assignment page",
 });
 
 it("displays a numbered prose paragraph without OCR hard line breaks", async () => {
+  vi.spyOn(authApi, "session").mockResolvedValue({
+    user: { id: "student-1", email: "student@example.com", display_name: "Student" },
+    csrf_token: "test-csrf",
+  });
   vi.spyOn(api, "assignments").mockResolvedValue([]);
   vi.spyOn(api, "structure").mockResolvedValue({
     global_context: "", global_paragraphs: [], excluded: [], warnings: [],

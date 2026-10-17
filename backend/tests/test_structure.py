@@ -30,6 +30,25 @@ Câu 1. Đáp án không được gửi cho học sinh.
     assert "Em có nhận xét" not in result["parts"][0]["questions"][0]["ideas"][0]["context"]
 
 
+def test_reading_instruction_is_not_counted_as_source_paragraph():
+    result = structure_text("I. ĐỌC HIỂU\nĐọc văn bản:\n(1) Năm 1440, máy in ra đời.\n(2) Tri thức lan rộng.\nCâu 1. Theo văn bản, máy in ra đời khi nào?")
+    part = result["parts"][0]
+    assert [paragraph["text"] for paragraph in part["paragraphs"]] == [
+        "(1) Năm 1440, máy in ra đời.", "(2) Tri thức lan rộng.",
+    ]
+    assert "Đọc văn bản:" not in part["context"]
+    assert "Đọc văn bản:" not in part["questions"][0]["context"]
+
+
+def test_source_intro_variants_are_separate_from_actual_content():
+    for intro in ("Đọc đoạn trích sau:", "Quan sát biểu đồ sau:", "Dựa vào bảng số liệu dưới đây:"):
+        result = structure_text(f"I. ĐỌC HIỂU\n{intro}\n(1) Đọc sách giúp mở rộng hiểu biết.\nCâu 1. Nêu thông tin trong ngữ liệu.")
+        part = result["parts"][0]
+        assert intro not in part["context"]
+        assert len(part["paragraphs"]) == 1
+        assert part["paragraphs"][0]["text"] == "(1) Đọc sách giúp mở rộng hiểu biết."
+
+
 def test_unlabeled_text_requires_review_without_forcing_student_to_shorten():
     result = structure_text("Hãy phân tích vai trò của dẫn chứng trong bài nghị luận.")
     assert result["parts"][0]["questions"][0]["label"] == "Nội dung chưa tách được"

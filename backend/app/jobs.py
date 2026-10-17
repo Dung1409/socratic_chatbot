@@ -50,6 +50,7 @@ class JobQueue:
         with self.db.connect() as conn:
             query = """
                 SELECT d.id AS document_id, j.id AS job_id, d.filename, d.title,
+                       d.created_at, d.updated_at,
                        d.status, d.extracted_text AS text, d.extracted_pages,
                        d.extraction_warnings, d.error, j.attempts
                 FROM uploaded_documents d JOIN jobs j ON j.document_id=d.id WHERE d.id=?
@@ -69,6 +70,21 @@ class JobQueue:
         result["document_type"] = classify_document(result["text"] or "", result["filename"])
         result["subject"] = detect_subject(result["text"] or "", result["filename"])
         return result
+
+    def documents(self, owner_id=None):
+        with self.db.connect() as conn:
+            query = """SELECT d.id AS document_id, d.filename, d.title, d.status,
+                              d.created_at, d.updated_at, d.extracted_text AS text,
+                              d.extracted_pages, d.extraction_warnings, d.error,
+                              j.id AS job_id, j.attempts
+                       FROM uploaded_documents d JOIN jobs j ON j.document_id=d.id"""
+            params = ()
+            if owner_id is not None:
+                query += " WHERE d.owner_id=?"
+                params = (owner_id,)
+            query += " ORDER BY d.created_at DESC"
+            rows = self.db.execute(conn, query, params).fetchall()
+        return [self.document(row["document_id"], owner_id=owner_id) for row in rows]
 
     def claim(self):
         timestamp = time.time()

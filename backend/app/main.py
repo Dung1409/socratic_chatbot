@@ -347,6 +347,36 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         filename, data = read_upload(file)
         return queue.submit(filename, data, owner_id=user.id)
 
+    @app.get("/api/documents", tags=["Documents"])
+    def documents(user: Principal = Depends(auth.current_user)):
+        result = []
+        for document in queue.documents(owner_id=user.id):
+            structure = document.get("structure") or {}
+            parts = structure.get("parts") or []
+            questions = [question for part in parts for question in part.get("questions", [])]
+            groups = []
+            group_by_key = {}
+            for question in questions:
+                source = (question.get("materials") or "").strip()
+                key = source or next((part.get("id") for part in parts
+                                      if question in part.get("questions", [])), question.get("id"))
+                group = group_by_key.get(key)
+                if group is None:
+                    group = {"id": f"source-{len(groups) + 1}", "label": "Ngữ liệu chung" if source else "Nội dung phần", "text": source,
+                             "question_ids": [], "question_labels": []}
+                    groups.append(group)
+                    group_by_key[key] = group
+                group["question_ids"].append(question.get("id"))
+                group["question_labels"].append(question.get("label"))
+            result.append({"document_id": document["document_id"], "filename": document["filename"],
+                           "title": document["title"], "status": document["status"],
+                           "created_at": document.get("created_at"), "updated_at": document.get("updated_at"),
+                           "document_type": document.get("document_type"), "subject": document.get("subject"),
+                           "page_count": len(document.get("pages") or []), "part_count": len(parts),
+                           "question_count": len(questions), "warning_count": len(document.get("extraction_warnings") or []),
+                           "groups": groups})
+        return result
+
     @app.get("/api/documents/{document_id}", tags=["Documents"])
     def document(document_id: str, user: Principal = Depends(auth.current_user)):
         result = queue.document(document_id, owner_id=user.id)
@@ -581,9 +611,53 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def progress(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
             saved = saved_sessions(conn, user.id)
+            sessions_by_assignment = {}
+            for session in saved:
+                sessions_by_assignment.setdefault(session["assignment_id"], []).append(session)
+            groups = []
+            relational = db.execute(conn, """SELECT id, title, created_at FROM assignments
+                WHERE owner_id=? ORDER BY created_at DESC""", (user.id,)).fetchall()
+            relational_ids = {row["id"] for row in relational}
+            for assignment in relational:
+                assignment_sessions = sessions_by_assignment.get(assignment["id"], [])
+                question_rows = db.execute(conn, """SELECT id, item_order, label, prompt, metadata_json
+                    FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
+                                           (assignment["id"],)).fetchall()
+                questions = []
+                for index, row in enumerate(question_rows):
+                    matched = next((session for session in assignment_sessions
+                                    if (session.get("assignment") or {}).get("active_item_id") == row["id"]), None)
+                    if matched is None and index == 0:
+                        matched = next((session for session in assignment_sessions
+                                        if not (session.get("assignment") or {}).get("active_item_id")), None)
+                    metadata = _decode_json(row["metadata_json"], {})
+                    questions.append({
+                        "id": row["id"], "order": row["item_order"], "label": row["label"],
+                        "prompt": row["prompt"], "source_only": bool(metadata.get("source_only")),
+                        "session_id": matched["id"] if matched else None,
+                    })
+                if not questions:
+                    questions = [{"id": assignment["id"], "order": 1, "label": "Tài liệu đầu vào",
+                                  "prompt": "", "source_only": True,
+                                  "session_id": assignment_sessions[0]["id"] if assignment_sessions else None}]
+                groups.append({"id": assignment["id"], "title": assignment["title"],
+                               "created_at": assignment["created_at"], "items": questions})
+            for assignment in db.all(conn, "assignments", owner_id=user.id):
+                if assignment["id"] in relational_ids or assignment.get("source") == "legacy_seed":
+                    continue
+                assignment_sessions = sessions_by_assignment.get(assignment["id"], [])
+                groups.append({"id": assignment["id"], "title": assignment["title"],
+                               "created_at": assignment.get("created_at", ""),
+                               "items": [{"id": assignment["id"], "order": 1,
+                                          "label": "Nội dung đầu vào" if assignment.get("source_only") else "Câu hỏi",
+                                          "prompt": assignment.get("prompt", ""),
+                                          "source_only": bool(assignment.get("source_only")),
+                                          "session_id": assignment_sessions[0]["id"] if assignment_sessions else None}]})
+            groups.sort(key=lambda group: group["created_at"], reverse=True)
             return {
                 "bloom_profile": [{"skill": name, "value": sum(t["kind"] == "student" and t.get("purpose") != "source" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)],
                 "sessions": [public_session(s) for s in saved],
+                "assignments": groups,
             }
 
     dist = (frontend_dist or ROOT / "frontend/dist").resolve()

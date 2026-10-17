@@ -45,15 +45,23 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!learning || !window.visualViewport) return;
     const viewport = window.visualViewport;
+    const mobile = window.matchMedia("(max-width: 767px)");
     const element = app.current;
     const update = () => {
+      if (!mobile.matches) {
+        element?.style.removeProperty("--learning-viewport-height");
+        if (element) delete element.dataset["compactHeight"];
+        return;
+      }
       element?.style.setProperty("--learning-viewport-height", `${viewport.height}px`);
       if (element) element.dataset["compactHeight"] = String(viewport.height < 520);
     };
     update();
     viewport.addEventListener("resize", update);
+    mobile.addEventListener("change", update);
     return () => {
       viewport.removeEventListener("resize", update);
+      mobile.removeEventListener("change", update);
       element?.style.removeProperty("--learning-viewport-height");
       if (element) delete element.dataset["compactHeight"];
     };
@@ -211,7 +219,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ref={app}
       className={cn(
         "min-h-[100dvh] bg-background",
-        learning && "learning-theme learning-app min-h-0 overflow-hidden",
+        learning && "learning-theme learning-app h-[100dvh] min-h-0 overflow-hidden",
       )}
     >
       <a
@@ -266,7 +274,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main
           id="main-content"
           tabIndex={-1}
-          className={learning ? "min-h-0 flex-1 overflow-hidden" : undefined}
+          className={learning ? "flex min-h-0 flex-1 flex-col overflow-hidden" : undefined}
         >
           {children}
         </main>

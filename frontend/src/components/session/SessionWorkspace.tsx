@@ -99,9 +99,9 @@ export function SessionWorkspace({ session, children, composer, activity = false
       : "Đang đối thoại";
 
   return (
-    <div className="learning-workspace mx-auto flex h-full min-h-0 min-w-0 bg-background">
+    <div className="learning-workspace mx-auto flex h-0 min-h-0 min-w-0 flex-1 bg-background">
       <section
-        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        className="flex h-full min-h-0 min-w-0 flex-1 flex-col"
         aria-label="Không gian đối thoại Socratic"
       >
         <header className="learning-session-header shrink-0 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
@@ -218,10 +218,21 @@ export function SessionWorkspace({ session, children, composer, activity = false
           )}
           </div>
         </header>
-        <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          className="relative flex h-0 min-h-0 flex-1 flex-col"
+          onWheel={(event) => {
+            const element = scroller.current;
+            if (!element || event.deltaY === 0 || element.scrollHeight <= element.clientHeight) return;
+            const atTop = element.scrollTop <= 0;
+            const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
+            if ((event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) return;
+            event.preventDefault();
+            element.scrollTop += event.deltaY;
+          }}
+        >
           <div
             ref={scroller}
-            className="learning-history min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            className="learning-history h-0 min-h-0 flex-1 overflow-y-scroll overscroll-contain"
             role="region"
             aria-label="Lịch sử hội thoại"
             tabIndex={0}

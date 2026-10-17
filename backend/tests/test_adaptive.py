@@ -105,6 +105,34 @@ def test_prepare_repairs_unanswered_session_with_previous_question_opening(clien
     assert repaired["turns"][0]["text"] == "Gợi mở: Phân tích hình tượng trong bài thơ?"
 
 
+def test_progress_groups_questions_with_missing_results_and_source_only_document(client):
+    created = client.post("/api/learning/assignments", json={
+        "title": "Đề có hai câu hỏi",
+        "items": [
+            {"item_type": "reading", "label": "Câu 1", "prompt": "Tìm chi tiết trong văn bản?"},
+            {"item_type": "reading", "label": "Câu 2", "prompt": "Nêu tác dụng của chi tiết?"},
+        ],
+    }).json()
+    first = start(client, created["id"])
+    progress = client.get("/api/progress")
+    assert progress.status_code == 200, progress.text
+    group = next(group for group in progress.json()["assignments"] if group["id"] == created["id"])
+    assert [item["label"] for item in group["items"]] == ["Câu 1", "Câu 2"]
+    assert [item["session_id"] for item in group["items"]] == [first["id"], None]
+
+    source = client.post("/api/learning/assignments", json={
+        "title": "Tài liệu không có câu hỏi",
+        "items": [{"item_type": "reading", "label": "Nội dung đầu vào",
+                   "prompt": "Khám phá nội dung tài liệu",
+                   "metadata": {"source_only": True}}],
+    }).json()
+    progress = client.get("/api/progress").json()
+    source_group = next(group for group in progress["assignments"] if group["id"] == source["id"])
+    assert len(source_group["items"]) == 1
+    assert source_group["items"][0]["source_only"] is True
+    assert source_group["items"][0]["session_id"] is None
+
+
 def finish_and_submit(client, session, essay="Em kết luận cần phân tích dẫn chứng và kiểm tra phản đề trước khi khẳng định."):
     if not session["done"]:
         session = action(client, session, "finish").json()

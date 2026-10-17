@@ -25,14 +25,19 @@ function Page() {
   const query = useQuery({ queryKey: ["progress"], queryFn: api.progress });
   if (!query.data)
     return <ApiState loading={query.isPending} error={query.error} retry={query.refetch} />;
-  const { sessions, bloom_profile: bloomProfile } = query.data;
-  const completed = sessions.filter((session) => session.submitted).length;
+  const { sessions, assignments, bloom_profile: bloomProfile } = query.data;
+  const sessionById = new Map(sessions.map((session) => [session.id, session]));
+  const totalItems = assignments.reduce((total, assignment) => total + assignment.items.length, 0);
+  const completed = assignments.reduce((total, assignment) => total + assignment.items.filter((item) => {
+    const session = item.session_id ? sessionById.get(item.session_id) : null;
+    return session?.submitted && session.assessment?.status === "complete";
+  }).length, 0);
   return (
     <>
       <PageHeader
         eyebrow="Nhật ký học tập"
         title="Tiến trình tự học"
-        desc={`${sessions.length} phiên đã lưu · ${completed} phiên hoàn thành. Xem lại bài viết và cách lập luận của bạn.`}
+        desc={`${assignments.length} đề/tài liệu · ${completed}/${totalItems} mục có kết quả. Xem lại từng câu và cách lập luận của bạn.`}
       />
       <div className="p-6 lg:p-10 grid gap-6 xl:grid-cols-2">
         <Panel title="Số câu đã luyện tập theo bậc Bloom">
@@ -73,61 +78,76 @@ function Page() {
           </ul>
         </Panel>
         <div className="xl:col-span-2 space-y-4">
-          <h2 className="font-semibold">Các phiên tự học đã lưu</h2>
-          {sessions.length === 0 ? (
-            <Panel title="Chưa có phiên học">
+          <h2 className="font-semibold">Kết quả theo đề và câu hỏi</h2>
+          {assignments.length === 0 ? (
+            <Panel title="Chưa có đề hoặc tài liệu">
               <p className="text-sm text-muted-foreground mb-4">
-                Thêm đề riêng để bắt đầu và ghi lại tiến trình luyện tập.
+                Thêm đề hoặc tài liệu để bắt đầu và theo dõi kết quả từng câu.
               </p>
               <Button asChild>
                 <Link to="/de-bai">Thêm đề tự học</Link>
               </Button>
             </Panel>
           ) : (
-            sessions.map((session) => (
+            assignments.map((assignment) => {
+              const available = assignment.items.filter((item) => {
+                const session = item.session_id ? sessionById.get(item.session_id) : null;
+                return session?.submitted && session.assessment?.status === "complete";
+              }).length;
+              return (
               <Panel
-                key={session.id}
-                title={session.assignment.title}
+                key={assignment.id}
+                title={assignment.title}
                 action={
                   <span className="text-xs text-muted-foreground">
-                    {session.submitted ? "Đã hoàn thành" : "Đang học"}
+                    {available}/{assignment.items.length} mục có kết quả
                   </span>
                 }
               >
-                <p className="text-xs text-muted-foreground mb-3">
-                  {new Date(session.updated_at).toLocaleString("vi-VN")} ·{" "}
-                  {session.turns.filter((turn) => turn.kind === "student").length} câu trả lời ·{" "}
-                  {session.turns.filter((turn) => turn.kind === "hint").length} gợi ý
-                </p>
-                {session.submitted && (
-                  <details className="mb-4 rounded-md border p-3">
-                    <summary className="cursor-pointer text-sm font-medium">
-                      Bài viết cuối phiên
-                    </summary>
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
-                      {session.essay}
-                    </p>
-                  </details>
-                )}
-                {session.assessment && (
-                  <details className="mb-4">
-                    <summary className="cursor-pointer text-sm font-medium text-primary">
-                      {session.assessment.classification
-                        ? `${session.assessment.classification} · Điểm tư duy ${session.assessment.score}/100`
-                        : "Báo cáo: chưa đủ bằng chứng để tính điểm tổng"}
-                    </summary>
-                    <div className="mt-3">
-                      <AssessmentReport report={session.assessment} />
-                    </div>
-                  </details>
-                )}
-                <Button asChild variant="outline" size="sm">
-                  <Link to="/phien-hoc" search={{ assignment: session.assignment_id }}>
-                    {session.submitted ? "Xem lại đối thoại" : "Tiếp tục phiên học"}
-                  </Link>
-                </Button>
+                <ol className="space-y-3" aria-label={`Các mục của ${assignment.title}`}>
+                  {assignment.items.map((item) => {
+                    const session = item.session_id ? sessionById.get(item.session_id) : null;
+                    const assessment = session?.submitted ? session.assessment : null;
+                    return (
+                      <li key={item.id} className="rounded-lg border bg-background p-4 sm:p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-muted-foreground">{item.source_only ? "Tài liệu không có câu hỏi" : `Câu ${item.order}`}</p>
+                            <h3 className="mt-1 font-semibold">{item.source_only ? "Kết quả tài liệu đầu vào" : item.label}</h3>
+                            {!item.source_only && item.prompt && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.prompt}</p>}
+                          </div>
+                          <span className={`rounded-full px-3 py-1 text-xs font-medium ${assessment?.status === "complete" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                            {assessment?.status === "complete" ? `${assessment.score}/100` : "Chưa có kết quả"}
+                          </span>
+                        </div>
+                        {session && !session.submitted && <p className="mt-2 text-xs text-muted-foreground">Đang học · Chưa nộp bài tổng hợp</p>}
+                        {assessment?.status === "insufficient_evidence" && <p className="mt-2 text-xs text-muted-foreground">Đã nộp, nhưng chưa đủ bằng chứng để tính điểm.</p>}
+                        {assessment && (
+                          <details className="mt-3 rounded-md border p-3">
+                            <summary className="cursor-pointer text-sm font-medium text-primary">Xem báo cáo của {item.source_only ? "tài liệu" : "câu này"}</summary>
+                            <div className="mt-3"><AssessmentReport report={assessment} /></div>
+                          </details>
+                        )}
+                        {session?.submitted && session.essay && (
+                          <details className="mt-3 rounded-md border p-3 text-sm">
+                            <summary className="cursor-pointer font-medium">Xem bài tổng hợp</summary>
+                            <p className="mt-3 whitespace-pre-wrap leading-relaxed">{session.essay}</p>
+                          </details>
+                        )}
+                        <Button asChild variant="outline" size="sm" className="mt-3">
+                          {session ? (
+                            <Link to="/phien-hoc" search={{ session: session.id }}>{session.submitted ? "Xem lại phiên học" : "Tiếp tục học"}</Link>
+                          ) : (
+                            <Link to="/phien-hoc" search={{ assignment: assignment.id, item: item.id }}>Bắt đầu học</Link>
+                          )}
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ol>
               </Panel>
-            ))
+              );
+            })
           )}
         </div>
       </div>

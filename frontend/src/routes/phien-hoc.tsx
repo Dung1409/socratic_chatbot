@@ -8,9 +8,10 @@ import { AdaptiveSessionView } from "@/components/AdaptiveSessionView";
 import { TemplateSessionView } from "@/components/session/TemplateSessionView";
 
 export const Route = createFileRoute("/phien-hoc")({
-  validateSearch: (search: Record<string, unknown>): { assignment?: string; session?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { assignment?: string; session?: string; item?: string } => ({
     ...(typeof search["assignment"] === "string" ? { assignment: search["assignment"] } : {}),
     ...(typeof search["session"] === "string" ? { session: search["session"] } : {}),
+    ...(typeof search["item"] === "string" ? { item: search["item"] } : {}),
   }),
   head: () =>
     seo(
@@ -21,15 +22,19 @@ export const Route = createFileRoute("/phien-hoc")({
 });
 
 function Session() {
-  const { assignment, session } = Route.useSearch();
-  const queryKey = ["session", session ?? assignment ?? "latest"];
+  const { assignment, session, item } = Route.useSearch();
+  const queryKey = ["session", session ?? assignment ?? "latest", item ?? ""];
   const query = useQuery({
     queryKey,
     queryFn: async () => {
       if (session) return api.prepareSession(session);
       if (assignment) {
         const started = await api.start(assignment);
-        return api.prepareSession(started.id);
+        const selected = item && started.assignment.items?.some((entry) => entry.id === item)
+          && started.assignment.active_item_id !== item
+          ? await api.selectSessionItem(started.id, item)
+          : started;
+        return api.prepareSession(selected.id);
       }
       const sessions = await api.sessions();
       const latest = sessions.find((s) => !s.submitted) ?? sessions[0] ?? null;

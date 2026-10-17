@@ -145,10 +145,13 @@ class AuthService:
                 "csrf_token": self.csrf(session_id)}
 
     def rate_limit(self, request, email, action):
-        ip = request.client.host if request.client else "unknown"
-        buckets = [(f"{action}-ip:{ip}", 100 if action == "login" else 20, 900)]
-        if action == "login":
-            buckets.append((f"login-email:{email}", 10, 900))
+        # With proxy trust disabled this is a connection peer shared by learners.
+        # Keep the existing IP bucket keys/limits; do not claim this is a student IP.
+        peer = request.client.host if request.client else "unknown"
+        setting, default = (("AUTH_LOGIN_GLOBAL_LIMIT", 300) if action == "login" else ("AUTH_REGISTER_GLOBAL_LIMIT", 60))
+        buckets = [(f"{action}-global", config.positive_integer(setting, default), 900),
+                   (f"{action}-ip:{peer}", 100 if action == "login" else 20, 900),
+                   (f"{action}-email:{email.strip().lower()}", 10 if action == "login" else 3, 900)]
         self.consume_limits(buckets)
 
     def resource_limit(self, user_id, resource):

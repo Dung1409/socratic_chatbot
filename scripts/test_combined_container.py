@@ -56,7 +56,8 @@ def main():
                "-e", "WORKER_PARSER_MEMORY_MB=256", "-e", "TUTOR_MODE=template",
                "-e", f"JWT_SECRET={jwt_secret}",
                "-e", "AUTH_COOKIE_SECURE=true", "-e", "AUTH_ALLOWED_ORIGINS=https://study.example.com",
-               "-e", "CORS_ORIGINS=https://study.example.com", "-e", "FORWARDED_ALLOW_IPS=127.0.0.1"]
+               "-e", "CORS_ORIGINS=https://study.example.com", "-e", "TRUST_PROXY_HEADERS=false",
+               "-e", "PUBLIC_API_ORIGIN=https://study.example.com"]
 
     def state(name=app):
         return json.loads(docker("inspect", "--format", "{{json .State}}", name).stdout)
@@ -124,6 +125,7 @@ def main():
             assert set(processes) == {"supervisor", "api", "worker"}
             assert processes["supervisor"] == 1
             assert len(set(processes.values())) == 3
+            exec_python(f"from pathlib import Path; cmd=Path('/proc/{processes['api']}/cmdline').read_bytes().split(b'\\0'); assert b'--no-proxy-headers' in cmd and b'--proxy-headers' not in cmd")
             assert docker("exec", app, "python", "-m", "backend.app.healthcheck").returncode == 0
             response = client.post("/api/auth/register", json={"email": "container@example.com", "password": "Test-only password 123", "display_name": "Container test"})
             assert response.status_code == 201, response.text

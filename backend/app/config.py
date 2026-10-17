@@ -104,16 +104,48 @@ def origins(name, default):
     return values
 
 
+def trust_proxy_headers():
+    return boolean("TRUST_PROXY_HEADERS", False)
+
+
 def validate_proxy():
-    if not production():
-        return
+    """Return only canonical addresses Uvicorn can interpret; never guess peers."""
+    if not trust_proxy_headers():
+        return []
     values = os.getenv("FORWARDED_ALLOW_IPS", "").split(",")
     try:
-        networks = [ipaddress.ip_network(value.strip(), strict=False) for value in values]
-        if any(network.prefixlen == 0 for network in networks):
-            raise ValueError()
+        canonical = []
+        for value in values:
+            value = value.strip()
+            if not value or "%" in value:
+                raise ValueError()
+            if "/" in value:
+                network = ipaddress.ip_network(value, strict=False)
+                if network.prefixlen == 0:
+                    raise ValueError()
+                canonical.append(str(network))
+            else:
+                canonical.append(str(ipaddress.ip_address(value)))
     except ValueError:
         raise RuntimeError("FORWARDED_ALLOW_IPS must explicitly list trusted proxy IPs/CIDRs; wildcard trust is forbidden") from None
+    return list(dict.fromkeys(canonical))
+
+
+def public_api_origin():
+    if not os.getenv("PUBLIC_API_ORIGIN", "").strip():
+        return None
+    values = origins("PUBLIC_API_ORIGIN", "")
+    if len(values) != 1:
+        raise RuntimeError("PUBLIC_API_ORIGIN must contain exactly one origin")
+    parsed = urlsplit(values[0])
+    if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path or parsed.query or parsed.fragment):
+        raise RuntimeError("PUBLIC_API_ORIGIN must be an HTTP(S) origin without a path")
+    try:
+        parsed.port
+    except ValueError:
+        raise RuntimeError("PUBLIC_API_ORIGIN has an invalid port") from None
+    return values[0]
 
 
 def validate_runtime(database, worker=False):
@@ -122,12 +154,18 @@ def validate_runtime(database, worker=False):
     positive_integer("WORKER_PARSER_MEMORY_MB", 512)
     positive_integer("DB_STATEMENT_TIMEOUT_MS", 30000)
     positive_integer("DB_LOCK_TIMEOUT_MS", 5000)
+    if not worker:
+        validate_proxy()
+        positive_integer("AUTH_LOGIN_GLOBAL_LIMIT", 300)
+        positive_integer("AUTH_REGISTER_GLOBAL_LIMIT", 60)
+        origin = public_api_origin()
+        if production() and not trust_proxy_headers() and origin is None:
+            raise RuntimeError("PUBLIC_API_ORIGIN is required when TRUST_PROXY_HEADERS=false in production")
     if production():
         validate_database_url()
         if not database.postgres:
             raise RuntimeError("Production requires PostgreSQL")
         if not worker:
-            validate_proxy()
             if not boolean("BACKGROUND_JOBS", False):
                 raise RuntimeError("BACKGROUND_JOBS must be true in production")
             positive_integer("AI_REQUESTS_PER_HOUR", 60)

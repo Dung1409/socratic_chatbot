@@ -22,6 +22,7 @@ from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 from .ai_tutor import OpenAITutor
 from .adaptive import AdaptiveSessions, public_pending
 from . import config
+from .proxy import PublicOriginMiddleware
 
 ROOT = config.ROOT
 logger = logging.getLogger("socratic.api")
@@ -75,6 +76,9 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             queue.storage_path.mkdir(parents=True, exist_ok=True)
             config.check_storage(queue.storage_path)
         logger.info("API started database=%s background_jobs=%s", "postgresql" if db.postgres else "sqlite", background_jobs)
+        if not config.trust_proxy_headers():
+            logger.warning("Proxy headers are disabled; client IP may be the ingress peer, not a learner. "
+                           "Authentication IP limits are shared per peer; email, global and user limits remain active.")
         yield
 
     app = FastAPI(title="SocraVăn API", version="0.1.0", lifespan=lifespan,
@@ -82,6 +86,9 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     app.state.db = db
     app.state.queue = queue
     app.state.auth = auth
+    public_origin = config.public_api_origin()
+    if public_origin:
+        app.add_middleware(PublicOriginMiddleware, origin=public_origin)
     origins = config.origins(
         "AUTH_ALLOWED_ORIGINS",
         "" if config.production() else "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000")

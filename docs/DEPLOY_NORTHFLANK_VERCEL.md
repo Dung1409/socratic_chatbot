@@ -57,7 +57,10 @@ sequence cần thiết. Nếu tách role, bảo đảm quyền trên bảng/sequ
 | AUTH_ACCESS_SECONDS / AUTH_REFRESH_SECONDS | 900 / 604800 |
 | AUTH_ALLOWED_ORIGINS | Origin HTTPS frontend chính xác, nhiều origin phân tách bằng dấu phẩy |
 | CORS_ORIGINS | Origin được phép, phải nằm trong AUTH_ALLOWED_ORIGINS |
-| FORWARDED_ALLOW_IPS | IP/CIDR proxy đã xác minh, xem mục 9 |
+| TRUST_PROXY_HEADERS | false mặc định; dùng cho staging chưa xác minh ingress |
+| FORWARDED_ALLOW_IPS | Chỉ bắt buộc khi TRUST_PROXY_HEADERS=true; proxy IP/CIDR đã xác minh |
+| PUBLIC_API_ORIGIN | Origin HTTPS frontend staging, ví dụ https://study.example.com; bắt buộc production khi không trust proxy |
+| AUTH_LOGIN_GLOBAL_LIMIT / AUTH_REGISTER_GLOBAL_LIMIT | 300 / 60 attempts toàn hệ thống mỗi 15 phút |
 | TUTOR_MODE | openai |
 | OPENAI_API_KEY | Project key riêng, chỉ cấp cho API |
 | OPENAI_TUTOR_MODEL / OPENAI_ASSESSMENT_MODEL | gpt-6.1-sol / gpt-6.1-sol, model hiện có trong source |
@@ -144,7 +147,10 @@ Supervisor khởi chạy đúng một Uvicorn process (`--workers 1`) và một 
 Log hai tiến trình đi thẳng stdout/stderr. Không có shell background hoặc migration lúc startup;
 combined từ chối `AUTO_MIGRATE=true` và `BACKGROUND_JOBS=false`.
 Biến PORT không đổi port cố định 8000. Gắn volume trước khi chạy.
-Thiếu DB/JWT/origins/proxy/AI key hoặc cấu hình production không hợp lệ chặn startup.
+Thiếu DB/JWT/origins/public origin/AI key hoặc cấu hình production không hợp lệ chặn startup.
+`FORWARDED_ALLOW_IPS` chỉ bắt buộc khi chủ động bật `TRUST_PROXY_HEADERS=true`.
+Luôn dùng dispatcher/combined để chọn đúng Uvicorn flags; command Uvicorn override cũ có thể
+không áp dụng chính sách mới, cần xóa override đó khi cập nhật release.
 
 API/worker thoát trước yêu cầu shutdown, kể cả exit 0: supervisor dừng process còn lại và exit 1
 để nền tảng restart. SIGTERM/SIGINT chuyển tới cả hai; worker hoàn tất job đang chạy rồi thoát.
@@ -209,10 +215,49 @@ Allowlist dùng origin frontend, ví dụ https://study.example.com, không ph�
 không có path. Chỉ thêm preview origin cụ thể nếu có staging backend/DB riêng; không dùng wildcard.
 X-CSRF-Token tiếp tục được kiểm tra. CORS không thay authentication hoặc CSRF.
 
-Uvicorn chỉ tin forwarded headers từ FORWARDED_ALLOW_IPS. Repo không đoán CIDR Northflank:
-xác minh ingress peer IP/CIDR của project với nền tảng. So sánh request trực tiếp và qua Vercel,
-thử từ hai client IP khác nhau, kiểm tra proxy chuẩn hóa header và toàn chuỗi hop tin cậy.
-Không dùng `*`, `0.0.0.0/0`, `::/0` hoặc tin toàn mạng để che lỗi; production từ chối wildcard và /0.
+### Staging khi chưa xác minh ingress
+
+Đặt `TRUST_PROXY_HEADERS=false` (mặc định), không khai báo `FORWARDED_ALLOW_IPS`.
+Dispatcher/combined truyền `--no-proxy-headers`, bỏ qua X-Forwarded-For/Proto; application
+không tự đọc những header này. Một warning lúc API startup nhắc rằng client IP có thể là peer ingress.
+Không điền IP/CIDR giả, không coi địa chỉ ingress là địa chỉ học sinh.
+
+Đặt `PUBLIC_API_ORIGIN` bằng **một origin HTTPS frontend staging**, không có path/query.
+Middleware dùng origin tĩnh này cho scheme/host của URL generation và redirect nếu route tạo redirect;
+không lấy scheme hoặc host từ forwarded headers. Backend image riêng có thể slash-redirect về HTTPS
+frontend; root image chứa SPA vẫn giữ hành vi catch-all cũ. Origin nội bộ có thể là HTTP,
+nhưng browser vẫn HTTPS và cookie luôn Secure/HttpOnly/SameSite=Lax. Giữ AUTH_COOKIE_SECURE=true;
+không thêm HTTPS redirect dựa trên scheme của kết nối nội bộ để tránh loop.
+Khi đổi domain, cập nhật đồng thời PUBLIC_API_ORIGIN, AUTH_ALLOWED_ORIGINS và CORS_ORIGINS.
+Đây là canonical origin cho mọi request, kể cả khi truy cập backend trực tiếp.
+
+### Bật trust sau khi xác minh
+
+Đặt `TRUST_PROXY_HEADERS=true` và `FORWARDED_ALLOW_IPS` bằng danh sách IP/CIDR proxy đã xác minh.
+Validator chuẩn hóa CIDR có host bits thành canonical CIDR, truyền danh sách chuẩn qua
+`--forwarded-allow-ips` của Uvicorn. Hostname, wildcard, CIDR `/0`, phần tử trống và scoped IPv6
+bị từ chối; repo không tự đoán proxy IP. Chế độ này yêu cầu allowlist cả trong development/test.
+PUBLIC_API_ORIGIN có thể tiếp tục giữ canonical URL, hoặc bỏ sau khi kiểm chứng forwarding đúng.
+Xác minh TCP peer và toàn chuỗi hop Northflank/Vercel, cách append/overwrite header;
+thử qua rewrite và trực tiếp backend với XFF giả. Chỉ tin ingress chưa chắc lấy được IP người dùng
+nếu chuỗi vẫn có Vercel egress. Danh sách trust không phải ACL chặn truy cập backend.
+
+### Authentication khi IP bị gộp
+
+Các giới hạn trong PostgreSQL đều có window 15 phút và trả 429 + Retry-After:
+
+| Thao tác | Theo peer IP (giữ nguyên) | Theo email | Toàn hệ thống |
+| --- | --- | --- | --- |
+| Login | 100 | 10 | AUTH_LOGIN_GLOBAL_LIMIT, mặc định 300 |
+| Register | 20 | 3 | AUTH_REGISTER_GLOBAL_LIMIT, mặc định 60 |
+
+Email được chuẩn hóa; các bucket dùng hash, không lưu email/IP thô trong bảng limiter.
+Khi nhiều người chung ingress, **20 đăng ký hoặc 100 login/15 phút là giới hạn dùng chung cho peer**,
+không phải mỗi học sinh. Giới hạn tổng thể còn chặn việc đổi ingress và email để phân tán request.
+Attempts bao gồm thành công và thất bại, các request đã bị limiter chặn không thực hiện hash password.
+Giữ quota AI/upload theo user ID, JWT/CSRF/origin checks; không tăng hoặc tắt limiter chỉ để che lỗi IP.
+Staging chỉ phù hợp nhóm nhỏ; account lockout hoặc chung peer/global bucket có thể gây từ chối dịch vụ.
+Không coi những giới hạn này là WAF/DDoS protection hay ngân sách AI toàn hệ thống.
 
 Login/register rate limit và AI/upload quota lưu trong PostgreSQL, trả 429 + Retry-After.
 Quota AI tính cả lần gọi lỗi; retry có thể tính thêm request. Retry đã hoàn tất không gọi provider lại.
@@ -244,7 +289,8 @@ và `/api/does-not-exist`. API lỗi phải trả lỗi API, không trả HTML i
 - Bỏ mount hoặc mount read-only: combined startup thất bại. Heartbeat stale: ready 503/CMD exit 1.
 - Cookie đúng Secure/HttpOnly/path: login → reload → access hết hạn → refresh → logout.
 - CSRF/origin sai bị từ chối; hai tài khoản không đọc dữ liệu nhau; logout thu hồi token cũ.
-- IP/rate limit đúng qua chuỗi proxy; IP header giả không vượt hạn mức; quota trả 429.
+- Không trust: thiếu allowlist vẫn startup, IP/scheme giả không được sử dụng; shared-peer/email/global quota trả 429.
+- Trust: kiểm chứng IP/rate limit qua chuỗi proxy; header giả không vượt hạn mức.
 - Bundle/log không secrets; smoke test Tutor/Assessment bằng project OpenAI test, kiểm tra quota/latency.
 - Backup/restore DB và file đã diễn tập; cảnh báo chi phí/disk/backlog đã cấu hình.
 
@@ -278,7 +324,7 @@ sau backup nên cần quyết định của người vận hành. Không reset/x
 | Upload đứng uploaded | Worker có chạy, cùng DB/volume, backlog và attempts |
 | Login/refresh 403 | Origin allowlist, CSRF, prefix /api có giữ nguyên |
 | Reload mất session | HTTPS, Set-Cookie, path, frontend có cùng origin |
-| Nhiều người chung 429 | Xác minh client IP/trusted proxies; không bỏ limiter để che lỗi |
+| Nhiều người chung 429 | Khi không trust, bucket ingress là dùng chung; kiểm tra shared peer/email/global limits, không bỏ limiter |
 | AI lỗi | Quota ứng dụng/provider, Retry-After, model access, giữ input để thử lại |
 | Trang con 404 / API trả HTML | Root Directory Vercel, rewrite order và backend destination |
 
@@ -299,6 +345,8 @@ heartbeat stale, kill từng child, restart, SIGTERM trong job, SIGINT và hai m
 sau đó chạy suite backend với schema PostgreSQL tạm. Chỉ dùng credentials test và template tutor,
 không gọi OpenAI tính phí. Docker named volume mô phỏng storage dùng chung, không chứng minh
 CSI/ReadWriteOnce fencing hoặc rollout của Northflank. Không xem smoke test này là load test.
+Suite có mô phỏng browser HTTPS → Vercel `/api` rewrite → HTTP origin để kiểm tra cookie,
+CSRF, refresh/logout và redirect; đây không phải kiểm thử trên Vercel/Northflank thật.
 Các bài supervisor dành cho POSIX được skip khi chạy pytest trực tiếp trên Windows;
 cần chạy chúng trên Linux để kiểm chứng nhánh process group/subreaper.
 

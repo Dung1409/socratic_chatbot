@@ -10,6 +10,7 @@ from backend.app.db import Database
 @pytest.fixture(autouse=True)
 def auth_settings(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("TRUST_PROXY_HEADERS", "false")
     monkeypatch.setenv("AI_REQUESTS_PER_HOUR", "1000")
     monkeypatch.setenv("UPLOADS_PER_HOUR", "1000")
     monkeypatch.setenv("TUTOR_MODE", "template")

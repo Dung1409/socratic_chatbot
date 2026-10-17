@@ -23,6 +23,7 @@ def production_settings(monkeypatch, tmp_path):
         "JWT_SECRET": "a-private-production-signing-key-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         "AUTH_COOKIE_SECURE": "true", "AUTH_ALLOWED_ORIGINS": "https://study.example.com",
         "CORS_ORIGINS": "https://study.example.com", "FORWARDED_ALLOW_IPS": "10.20.0.0/16",
+        "TRUST_PROXY_HEADERS": "true",
         "AUTO_MIGRATE": "false", "BACKGROUND_JOBS": "true", "TUTOR_MODE": "openai",
         "OPENAI_API_KEY": "fake-key-only-for-tests", "STORAGE_PATH": str(tmp_path / "storage"),
     }

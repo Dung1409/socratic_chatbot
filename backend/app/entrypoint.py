@@ -6,8 +6,11 @@ from . import config
 
 
 def api_command():
+    trusted = config.validate_proxy()
+    proxy_options = (["--proxy-headers", "--forwarded-allow-ips", ",".join(trusted)]
+                     if config.trust_proxy_headers() else ["--no-proxy-headers"])
     return [sys.executable, "-m", "uvicorn", "backend.app.main:app",
-            "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-access-log"]
+            "--host", "0.0.0.0", "--port", "8000", *proxy_options, "--no-access-log"]
 
 
 def main():

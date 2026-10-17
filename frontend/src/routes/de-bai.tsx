@@ -185,7 +185,7 @@ function Page() {
         prompt: prompt.trim(),
         target: 4,
         source_text: text.trim(),
-        document_id: documentId,
+        ...(documentId ? { document_id: documentId } : {}),
       });
       await client.invalidateQueries({ queryKey: ["assignments"] });
       await navigate({ to: "/phien-hoc", search: { assignment: result.id } });

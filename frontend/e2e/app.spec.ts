@@ -44,10 +44,10 @@ test("start from an empty workspace, study a personal assignment and save the fi
   await page.getByLabel("Dạng bài").selectOption("social");
   await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
   await expect(page.getByRole("heading", { name: "Tự học về ý nghĩa của đọc sách" })).toBeVisible();
-  await page.getByRole("button", { name: "Gợi ý mức 1 · Định hướng" }).click();
+  await page.getByRole("button", { name: "Xin gợi ý", exact: true }).click();
   await expect(page.getByText("Đọc lại yêu cầu và chọn một ý để tập trung trả lời.")).toBeVisible();
 
-  const answer = page.getByPlaceholder("Viết suy nghĩ của em… (Ctrl + Enter để gửi)");
+  const answer = page.getByPlaceholder("Viết suy nghĩ của em tại đây...");
   await answer.fill("Bản nháp của em được giữ khi tải lại trang.");
   await page.reload();
   await expect(answer).toHaveValue("Bản nháp của em được giữ khi tải lại trang.");
@@ -111,7 +111,9 @@ test("upload, edit extracted text before confirmation and navigate on mobile", a
   await page.getByLabel("Dạng bài").selectOption("social");
   await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
   await expect(page.getByRole("heading", { name: "Đề riêng về trách nhiệm" })).toBeVisible();
-  await expect(page.getByText(edited, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Xem đề bài", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText(edited, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Đóng đề bài", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByRole("button", { name: "Mở menu" }).click();

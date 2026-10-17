@@ -1,11 +1,14 @@
 import { Toaster as Sonner } from "sonner";
+import { useRouterState } from "@tanstack/react-router";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const Toaster = ({ ...props }: ToasterProps) => {
+  const learning = useRouterState({ select: (state) => state.location.pathname === "/phien-hoc" });
   return (
     <Sonner
-      className="toaster group"
+      className={learning ? "learning-theme toaster group" : "toaster group"}
+      position={learning ? "top-center" : "bottom-right"}
       toastOptions={{
         classNames: {
           toast:

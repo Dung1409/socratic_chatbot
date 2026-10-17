@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from .db import Database
-from .extraction import ExtractionError, MAX_FILE_BYTES, extract_text, validate_upload
+from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, validate_upload
+from .structure import structure_text
 from .jobs import JobQueue
-from .schemas import AssignmentInput, RubricInput, SessionInput, ActionInput, MessageInput, SubmissionInput, ReviewInput
+from .schemas import AssignmentInput, StructureInput, RubricInput, SessionInput, ActionInput, MessageInput, SubmissionInput, ReviewInput
 from .tutor import SEED, BLOOM_NAMES, lesson_steps, tutor_turn
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -101,10 +102,16 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         if background_jobs:
             return JSONResponse(queue.submit(filename, data), status_code=202)
         try:
-            text = extract_text(filename, data)
+            extracted = extract_document(filename, data)
         except ExtractionError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
-        return {"filename": filename, "title": Path(filename).stem, "text": text, "needs_confirmation": True}
+        return {"filename": filename, "title": Path(filename).stem, **extracted,
+                "structure": structure_text(extracted["text"], extracted["pages"]),
+                "needs_confirmation": True}
+
+    @app.post("/api/uploads/structure", tags=["Assignments"])
+    def analyze_structure(body: StructureInput):
+        return structure_text(body.text, [page.model_dump() for page in body.pages] if body.pages else None)
 
     def read_upload(file):
         filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1][:300]

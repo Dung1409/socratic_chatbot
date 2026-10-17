@@ -8,6 +8,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATABASE_PATH=/app/backend/data/socratic.db
 
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-vie tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+# Pin the official high-accuracy Vietnamese model. The checksum prevents a
+# mutable upstream URL from silently changing OCR results between builds.
+ADD --checksum=sha256:b6b49293d95d0b6dbd8780174627e82c75be957b6f4ed9862155540d6b00bb45 \
+    https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/main/vie.traineddata \
+    /usr/share/tesseract-ocr/5/tessdata/vie.traineddata
+RUN chmod 644 /usr/share/tesseract-ocr/5/tessdata/vie.traineddata
 COPY requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 

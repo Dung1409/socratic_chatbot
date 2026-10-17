@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from .db import Database
-from .extraction import ExtractionError, extract_text
+from .extraction import ExtractionError, extract_document
 from .jobs import JobQueue
 
 logger = logging.getLogger("socratic.worker")
@@ -36,8 +36,9 @@ def process_one(queue: JobQueue, heartbeat: Path | None = None):
     renewal.start()
     try:
         # File parsing happens outside a database transaction.
-        text = extract_text(job["filename"], queue.read_file(job))
-        accepted = queue.finish(job, text=text)
+        result = extract_document(job["filename"], queue.read_file(job))
+        accepted = queue.finish(job, text=result["text"], pages=result["pages"],
+                                warnings=result["warnings"])
         logger.info("Extraction finished job_id=%s accepted=%s", job["id"], accepted)
     except ExtractionError as exc:
         queue.finish(job, error=str(exc))

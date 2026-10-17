@@ -31,6 +31,7 @@ def test_background_upload_survives_api_restart(database, tmp_path, monkeypatch)
         result = api.get(f"/api/documents/{document_id}").json()
         assert result["status"] == "needs_review"
         assert result["text"] == TEXT
+        assert result["structure"]["parts"][0]["questions"][0]["label"] == "Nội dung chưa tách được"
         assert "storage_key" not in result
         assert api.get("/api/documents/missing").status_code == 404
 
@@ -82,7 +83,7 @@ def test_exhausted_crashed_job_is_marked_failed(queue):
 
 
 def test_invalid_pdf_is_a_terminal_failure(queue):
-    document = queue.submit("broken.pdf", b"not a pdf")
+    document = queue.submit("broken.pdf", b"%PDF-not really a pdf")
     assert process_one(queue)
     result = queue.document(document["document_id"])
     assert result["status"] == "failed"

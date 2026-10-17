@@ -129,13 +129,40 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
-type ExtractedDocument = { filename: string; title: string; text: string };
+export type SourcePage = { number: number; label: string; text: string; method: string; confidence: number | null };
+export type SourceParagraph = { id: string; text: string; source_pages: number[] };
+export type ParsedIdea = { id: string; label: string; text: string; context: string; source_pages: number[] };
+export type ParsedQuestion = {
+  id: string; label: string; text: string; stem: string; context: string;
+  task?: string; materials?: string;
+  points?: string | null; source_selection?: "full_source" | "cited_paragraphs" | "matched_phrase";
+  subquestions: string[]; ideas: ParsedIdea[];
+  source_pages: number[]; paragraphs: SourceParagraph[];
+};
+export type ParsedPart = {
+  id: string; title: string; context: string; source_pages: number[];
+  paragraphs: SourceParagraph[]; questions: ParsedQuestion[];
+};
+export type DocumentStructure = {
+  global_context: string;
+  global_paragraphs: SourceParagraph[];
+  parts: ParsedPart[];
+  excluded: { text: string; page: number | null; reason: string }[];
+  warnings: string[];
+};
+type ExtractedDocument = {
+  filename: string; title: string; text: string; structure?: DocumentStructure;
+  pages?: SourcePage[]; warnings?: string[];
+};
 type PendingDocument = { document_id: string; job_id: string; status: string };
 type DocumentStatus = PendingDocument & {
   filename: string;
   title: string;
   text: string | null;
   error: string | null;
+  structure?: DocumentStructure | null;
+  pages?: SourcePage[];
+  extraction_warnings?: string[];
 };
 
 export const api = {
@@ -158,7 +185,10 @@ export const api = {
     for (let attempt = 0; attempt < 240; attempt++) {
       const document = await request<DocumentStatus>(`/documents/${result.document_id}`);
       if (document.status === "needs_review" && document.text !== null) {
-        return { filename: document.filename, title: document.title, text: document.text };
+        return { filename: document.filename, title: document.title, text: document.text,
+          ...(document.structure ? { structure: document.structure } : {}),
+          ...(document.pages ? { pages: document.pages } : {}),
+          ...(document.extraction_warnings ? { warnings: document.extraction_warnings } : {}) };
       }
       if (document.status === "failed") {
         throw new ApiError(document.error || "Không trích xuất được văn bản từ tệp.", 422);
@@ -167,6 +197,8 @@ export const api = {
     }
     throw new ApiError("Tệp vẫn đang được xử lý. Em có thể nhập đề trực tiếp trong lúc chờ.", 504);
   },
+  structure: (text: string, pages?: SourcePage[]) =>
+    post<DocumentStructure>("/uploads/structure", { text, ...(pages ? { pages } : {}) }),
   rubric: () => request<Rubric>("/rubric"),
   saveRubric: (criteria: Criterion[]) =>
     request<Rubric>("/rubric", { method: "PUT", body: JSON.stringify({ criteria }) }),

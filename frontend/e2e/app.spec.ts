@@ -86,7 +86,7 @@ test("create teacher assignment, preserve rubric, upload with confirmation and m
   await page.getByRole("link", { name: "Phiên học Socratic", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Trách nhiệm của tuổi trẻ" })).toBeVisible();
   await page.goto("/de-bai");
-  await page.getByLabel("Chọn tệp đề bài").setInputFiles({
+  await page.getByLabel("Chọn tệp PDF, Word hoặc TXT").setInputFiles({
     name: "De-luyen-tap.txt",
     mimeType: "text/plain",
     buffer: Buffer.from(
@@ -95,7 +95,7 @@ test("create teacher assignment, preserve rubric, upload with confirmation and m
   });
   await expect(page.getByText("Đã trích xuất văn bản.", { exact: false })).toBeVisible();
   await page.getByLabel("Tên đề", { exact: false }).fill("Đề luyện tập đọc sách");
-  await page.getByRole("button", { name: "Xác nhận đề & bắt đầu học" }).click();
+  await page.getByRole("button", { name: "Xác nhận câu này & bắt đầu học" }).click();
   await expect(page.getByRole("heading", { name: "Đề luyện tập đọc sách" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

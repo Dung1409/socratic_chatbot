@@ -142,10 +142,20 @@ def test_upload_extraction_requires_confirmation(client):
     assert result.status_code == 200
     assert result.json()["needs_confirmation"] is True
     assert "dẫn chứng" in result.json()["text"]
+    assert result.json()["structure"]["parts"][0]["questions"][0]["label"] == "Nội dung chưa tách được"
     assert len(client.get("/api/assignments").json()) == 3
-    assert client.post("/api/uploads/extract", files={"file": ("scan.png", b"image", "image/png")}).status_code == 415
+    assert client.post("/api/uploads/extract", files={"file": ("scan.png", b"image", "image/png")}).status_code == 422
     assert client.post("/api/uploads/extract", files={"file": ("broken.pdf", b"not pdf", "application/pdf")}).status_code == 422
     assert client.post("/api/uploads/extract", files={"file": ("large.txt", b"x" * (10 * 1024 * 1024 + 1), "text/plain")}).status_code == 413
+
+
+def test_structure_endpoint_keeps_only_selected_question_context(client):
+    text = "PHẦN I. ĐỌC HIỂU\nVăn bản dùng chung.\nCâu 1. Tìm hình ảnh.\nCâu 2. Nêu tác dụng."
+    result = client.post("/api/uploads/structure", json={"text": text})
+    assert result.status_code == 200
+    assert len(result.json()["parts"][0]["questions"]) == 2
+    assert "Văn bản dùng chung" in result.json()["parts"][0]["context"]
+    assert client.post("/api/uploads/structure", json={"text": "ngắn"}).status_code == 422
 
 
 def test_docx_extraction(client):
@@ -154,11 +164,29 @@ def test_docx_extraction(client):
     doc.add_paragraph("Đề bài: Phân tích một vấn đề nghị luận xã hội.")
     table = doc.add_table(rows=1, cols=1)
     table.cell(0, 0).text = "Yêu cầu có dẫn chứng cụ thể."
+    doc.add_paragraph("Câu 1. Nêu một dẫn chứng phù hợp.")
     stream = io.BytesIO()
     doc.save(stream)
     response = client.post("/api/uploads/extract", files={"file": ("de-bai.docx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
     assert response.status_code == 200
     assert "dẫn chứng" in response.json()["text"]
+    assert response.json()["text"].index("Yêu cầu có dẫn chứng") < response.json()["text"].index("Câu 1")
+    assert response.json()["pages"][0]["label"] == "Tài liệu Word"
+    assert response.json()["structure"]["parts"][0]["questions"][0]["label"] == "Câu 1"
+
+
+def test_image_upload_returns_ocr_structure(client, monkeypatch):
+    from PIL import Image
+    from backend.app import extraction
+
+    picture = Image.new("RGB", (480, 300), "white")
+    stream = io.BytesIO()
+    picture.save(stream, format="JPEG")
+    monkeypatch.setattr(extraction, "_ocr_image", lambda _: ("PHẦN I. ĐỌC HIỂU\nCâu 1. Em thấy gì?", 90.0))
+    response = client.post("/api/uploads/extract", files={"file": ("anh-1.jpg", stream.getvalue(), "image/jpeg")})
+    assert response.status_code == 200
+    assert response.json()["pages"][0]["method"] == "ocr"
+    assert response.json()["structure"]["parts"][0]["questions"][0]["label"] == "Câu 1"
 
 
 def test_static_frontend_and_unknown_api(tmp_path):

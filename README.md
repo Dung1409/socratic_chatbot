@@ -56,7 +56,7 @@ Compose chạy bốn service thường trực và một service migration chạy
 | `postgres` | PostgreSQL 16, dữ liệu ứng dụng và bảng `jobs` bền vững | Health check `pg_isready` |
 | `migrate` | Áp migration có phiên bản và tạo dữ liệu mẫu, rồi thoát với mã 0 | PostgreSQL sẵn sàng |
 | `backend` | FastAPI, ghi nhận upload và tạo job; user thường | Migration thành công; health check `/api/ready` kiểm tra DB và kho tệp |
-| `worker` | Trích xuất TXT, DOCX, PDF có chữ; nhận job từ PostgreSQL | Migration thành công; health check heartbeat và DB |
+| `worker` | Trích xuất TXT, DOCX, PDF (gồm trang scan) và ảnh; nhận job từ PostgreSQL | Migration thành công; health check heartbeat và DB |
 | `frontend` | Build React bằng Node.js, phục vụ SPA bằng Nginx | API và worker khỏe |
 
 `migrate` ở trạng thái `Exited (0)` sau khi chạy là bình thường. API và worker
@@ -71,7 +71,7 @@ bí mật theo môi trường. Bản Compose này chưa bật HTTPS hay xác th�
 
 Kho tệp local là volume dùng chung giữa API và worker, phù hợp lựa chọn trong
 tài liệu. Chưa cần MinIO/S3 riêng. Hàng đợi dùng bảng `jobs`, không cần Redis,
-Celery hoặc RabbitMQ. Truy xuất vector, pgvector và OCR vẫn là phần mở rộng.
+Celery hoặc RabbitMQ. Truy xuất vector và pgvector vẫn là phần mở rộng. OCR dùng Tesseract cài trong image backend/worker.
 
 Có thể build từng image độc lập từ thư mục gốc:
 
@@ -132,7 +132,8 @@ Compose mặc định chỉ mở cổng trên `127.0.0.1`, phù hợp chế đ�
 ## Chức năng đã nối API
 
 - Xem danh sách đề; giáo viên tạo đề và chọn Bloom mục tiêu.
-- Nhập đề trực tiếp hoặc trích xuất TXT UTF-8, DOCX và PDF có chữ (tối đa 10MB). Kiểm tra/sửa nội dung trước khi xác nhận.
+- Học sinh tải một tệp TXT UTF-8, DOCX, PDF hoặc tối đa 12 ảnh PNG/JPG/WEBP (mỗi tệp tối đa 10MB). PDF giữ ranh giới từng trang; trang scan và ảnh được OCR tiếng Việt + tiếng Anh. Với nhiều ảnh, học sinh xem trước, sắp lại thứ tự rồi mới xử lý; dấu trang in không khớp thứ tự sẽ được cảnh báo để kiểm tra.
+- Server đề xuất tách phần, ngữ liệu chung, câu hỏi, ý nhỏ và đoạn bằng quy tắc; dòng kết thúc đề/đáp án được đánh dấu loại trừ, không đưa vào câu học. Học sinh kiểm tra và có thể sửa văn bản rồi phân tích lại. Khi xác nhận, chỉ câu hoặc ý được chọn cùng ngữ cảnh liên quan được lưu làm đề cho phiên học; không có ngưỡng cắt 8.000 ký tự tùy ý. Chưa tự động tạo phiên cho toàn bộ câu trong một lần upload.
 - Bắt đầu đúng đề đã chọn; lưu đối thoại, ba mức gợi ý, tiến độ và bài nộp vào PostgreSQL hoặc SQLite. Tải lại trang để tiếp tục. Bản nháp lưu trong trình duyệt.
 - Chống gửi trùng bằng `client_message_id`, chống ghi đè khi nhiều yêu cầu gửi cùng lúc bằng phiên bản trạng thái.
 - Giáo viên sửa và lưu rubric tổng trọng số 100%. Mỗi phiên giữ bản rubric riêng để thay đổi rubric không ảnh hưởng phiên đang học.
@@ -143,7 +144,7 @@ Compose mặc định chỉ mở cổng trên `127.0.0.1`, phù hợp chế đ�
 
 Gia sư hiện dùng **kịch bản câu hỏi**, chưa tích hợp LLM. Đề Vợ nhặt giữ kịch bản của repo gốc; các đề khác dùng chuỗi câu hỏi chung theo mục tiêu Bloom. Chưa đánh giá tự động câu trả lời hoặc kết luận năng lực Bloom; điểm do giáo viên nhập. Biểu đồ Bloom thể hiện số câu đã luyện tập.
 
-Chưa có đăng nhập/phân quyền: toàn bộ phiên lưu cho hồ sơ Minh Anh; danh sách lớp có sáu hồ sơ mẫu. Chỉ chạy local; cần bổ sung xác thực và kiểm tra quyền tài nguyên trước khi triển khai nhiều người dùng. Đã có PostgreSQL, migration và worker trích xuất lưu tệp gốc trong Compose. Chưa hỗ trợ OCR ảnh/PDF scan, đánh giá LLM, xuất dữ liệu nghiên cứu hoặc toàn bộ schema nghiệp vụ của tài liệu thiết kế. Dữ liệu nghiệp vụ hiện giữ cấu trúc JSON của bản demo trong bảng `documents`; các bảng quan hệ đầy đủ vẫn cần migration tiếp theo.
+Chưa có đăng nhập/phân quyền: toàn bộ phiên lưu cho hồ sơ Minh Anh; danh sách lớp có sáu hồ sơ mẫu. Chỉ chạy local; cần bổ sung xác thực và kiểm tra quyền tài nguyên trước khi triển khai nhiều người dùng. Đã có PostgreSQL, migration và worker trích xuất lưu tệp gốc trong Compose. Bộ tách phần/câu hiện dựa trên nhãn rõ như “PHẦN I”, “Câu 1”; đề không có nhãn, ảnh mờ hoặc bố cục phức tạp cần học sinh kiểm tra thủ công. OCR trên máy chạy trực tiếp cần cài Tesseract với gói ngôn ngữ `vie` và `eng` (có thể đặt `OCR_TESSERACT_CMD`); Compose đã cài sẵn. Chưa có đánh giá LLM, xuất dữ liệu nghiên cứu hoặc toàn bộ schema nghiệp vụ của tài liệu thiết kế. Dữ liệu nghiệp vụ hiện giữ cấu trúc JSON của bản demo trong bảng `documents`; các bảng quan hệ đầy đủ vẫn cần migration tiếp theo.
 
 Khi chạy Python trực tiếp, SQLite tự tạo tại `backend/data/socratic.db`; đổi vị trí bằng `DATABASE_PATH`. Đặt `DATABASE_URL` để dùng PostgreSQL, hoặc bộ biến `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`; PostgreSQL có ưu tiên cao hơn đường dẫn SQLite. `AUTO_MIGRATE=true` tự áp migration lúc khởi động khi chạy trực tiếp. Compose đặt `AUTO_MIGRATE=false` và chạy service `migrate` trước.
 
@@ -183,7 +184,8 @@ backend/
   app/migrations/   # Migration có phiên bản cho PostgreSQL và SQLite
   app/jobs.py       # Job bền vững, lease, retry và kho tệp
   app/worker.py     # Tiến trình trích xuất chạy riêng
-  app/extraction.py # Trích xuất TXT, DOCX, PDF có chữ
+  app/extraction.py # Trích xuất TXT, DOCX, PDF và OCR ảnh/trang scan
+  app/structure.py  # Tách phần, đoạn, câu, ý; ghép ngữ cảnh và loại phần kết thúc
   app/schemas.py    # Kiểm tra dữ liệu đầu vào
   app/tutor.py      # Chuỗi câu hỏi ở chế độ kịch bản
   app/seed.json     # Đề bài, rubric, hồ sơ mẫu từ repo gốc

@@ -1,10 +1,12 @@
 import hashlib
+import json
 import time
 from pathlib import Path
 from uuid import uuid4
 
 from .db import Database
 from .extraction import MAX_FILE_BYTES, validate_upload
+from .structure import structure_text
 
 
 class JobQueue:
@@ -48,10 +50,17 @@ class JobQueue:
         with self.db.connect() as conn:
             row = self.db.execute(conn, """
                 SELECT d.id AS document_id, j.id AS job_id, d.filename, d.title,
-                       d.status, d.extracted_text AS text, d.error, j.attempts
+                       d.status, d.extracted_text AS text, d.extracted_pages,
+                       d.extraction_warnings, d.error, j.attempts
                 FROM uploaded_documents d JOIN jobs j ON j.document_id=d.id WHERE d.id=?
             """, (document_id,)).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        result = dict(row)
+        result["pages"] = json.loads(result.pop("extracted_pages") or "[]")
+        result["extraction_warnings"] = json.loads(result["extraction_warnings"] or "[]")
+        result["structure"] = structure_text(result["text"], result["pages"]) if result["text"] else None
+        return result
 
     def claim(self):
         timestamp = time.time()
@@ -100,7 +109,8 @@ class JobQueue:
             """, (timestamp + self.lease_seconds, timestamp, job["id"], job["lease_token"], timestamp))
             return cursor.rowcount == 1
 
-    def finish(self, job, text: str | None = None, error: str | None = None, retryable=False):
+    def finish(self, job, text: str | None = None, error: str | None = None, retryable=False,
+               pages: list | None = None, warnings: list | None = None):
         timestamp = time.time()
         retry = error is not None and retryable and job["attempts"] < job["max_attempts"]
         status = "queued" if retry else "failed" if error is not None else "completed"
@@ -115,8 +125,11 @@ class JobQueue:
                 return False  # A reclaimed lease cannot overwrite a newer result.
             document_status = "uploaded" if retry else "failed" if error is not None else "needs_review"
             self.db.execute(conn, """
-                UPDATE uploaded_documents SET status=?, extracted_text=?, error=?, updated_at=? WHERE id=?
-            """, (document_status, text, None if retry else error, timestamp, job["document_id"]))
+                UPDATE uploaded_documents SET status=?, extracted_text=?, extracted_pages=?,
+                    extraction_warnings=?, error=?, updated_at=? WHERE id=?
+            """, (document_status, text, json.dumps(pages or [], ensure_ascii=False),
+                  json.dumps(warnings or [], ensure_ascii=False), None if retry else error,
+                  timestamp, job["document_id"]))
             return True
 
     def read_file(self, job):

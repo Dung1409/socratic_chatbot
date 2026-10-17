@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { FileUp, FileText, ArrowRight } from "lucide-react";
 import { PageHeader, Panel, BloomBadge } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
-import { api, type DocumentStructure, type ParsedQuestion, type SourcePage } from "@/lib/api";
+import { api, type ContentBlock, type DocumentStructure, type ParsedQuestion, type SourcePage } from "@/lib/api";
 import { ApiState } from "@/components/ApiState";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,6 +35,8 @@ function Page() {
   const [prompt, setPrompt] = useState("");
   const [sourcePages, setSourcePages] = useState<SourcePage[] | null>(null);
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
+  const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([]);
+  const [documentType, setDocumentType] = useState("reference_document");
   const [images, setImages] = useState<ImageItem[]>([]);
   const [imageCache, setImageCache] = useState<Record<string, SourcePage>>({});
   const [busy, setBusy] = useState(false);
@@ -66,6 +68,8 @@ function Page() {
       setText(result.text);
       setSourcePages(result.pages ?? null);
       setSourceWarnings(result.warnings ?? []);
+      setContentBlocks(result.blocks ?? []);
+      setDocumentType(result.document_type ?? "reference_document");
       applyStructure(result.structure ?? await api.structure(result.text, result.pages));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không đọc được tệp");
@@ -91,6 +95,8 @@ function Page() {
       setStructure(null);
       setSourcePages(null);
       setSourceWarnings([]);
+      setContentBlocks([]);
+      setDocumentType("reference_document");
       setSelectedId("");
       setPrompt("");
       setTitle("Đề từ ảnh của em");
@@ -142,6 +148,11 @@ function Page() {
       setText(combined);
       setSourcePages(pages);
       setSourceWarnings(warnings);
+      setContentBlocks(pages.flatMap((page) => page.text.trim() ? [{
+        id: `page-${page.number}`, type: "paragraph", text: page.text,
+        page: page.number, method: page.method,
+      }] : []));
+      setDocumentType("image_note");
       applyStructure(parsed);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không đọc được bộ ảnh");
@@ -155,6 +166,9 @@ function Page() {
     try {
       const parsed = await api.structure(text.trim(), sourcePages ?? undefined);
       applyStructure(parsed);
+      setContentBlocks(text.trim().split(/\n\s*\n/).filter(Boolean).map((value, index) => ({
+        id: `manual-${index + 1}`, type: "paragraph", text: value.trim(), page: 1, method: "text",
+      })));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không tách được đề bài");
     } finally {
@@ -286,7 +300,7 @@ function Page() {
                 <span className="truncate">{file}</span>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Đã trích xuất văn bản. Em hãy kiểm tra và chỉnh sửa từng câu trước khi bắt đầu.
+                Đã trích xuất văn bản ({documentType}). Em hãy kiểm tra và chỉnh sửa trước khi bắt đầu.
               </p>
             </div>
           )}
@@ -320,6 +334,7 @@ function Page() {
                     setText(e.target.value);
                     setStructure(null);
                     setSourcePages(null);
+                    setContentBlocks([]);
                     setSelectedId("");
                     setPrompt("");
                   }}
@@ -349,6 +364,24 @@ function Page() {
                 {[...sourceWarnings, ...structure.warnings].map((warning, index) => (
                   <p key={`${index}-${warning}`} className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">{warning}</p>
                 ))}
+                {contentBlocks.length > 0 && (
+                  <details className="rounded-xl border bg-muted/20 p-4" open={documentType !== "exam"}>
+                    <summary className="cursor-pointer text-sm font-semibold">
+                      Nội dung đã bóc tách ({contentBlocks.length} khối) · {documentType}
+                    </summary>
+                    <div className="mt-4 max-h-[30rem] space-y-3 overflow-y-auto pr-2">
+                      {contentBlocks.map((block) => (
+                        <article key={block.id} className="rounded-lg border bg-background p-3">
+                          <div className="mb-1 flex items-center justify-between gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+                            <span>{block.type === "heading" ? "Tiêu đề" : block.type === "list_item" ? "Ý / danh sách" : "Đoạn văn"}</span>
+                            <span>Trang {block.page} · {block.method}</span>
+                          </div>
+                          <p className="whitespace-pre-wrap text-sm leading-7">{block.text}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                )}
                 <div className="grid gap-5 lg:grid-cols-[minmax(220px,290px)_minmax(0,1fr)] lg:items-start">
                   <nav className="space-y-4" aria-label="Danh sách câu hỏi">
                     {structure.parts.map((part) => (

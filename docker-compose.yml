@@ -11,7 +11,9 @@ x-backend: &backend
     AUTO_MIGRATE: "false"
     BACKGROUND_JOBS: "true"
     STORAGE_PATH: /app/storage
-    OCR_PROVIDER: ${OCR_PROVIDER:-vietocr}
+    # Tesseract remains the safe default; VietOCR can be enabled explicitly
+    # after comparing it on the user's document type.
+    OCR_PROVIDER: ${OCR_PROVIDER:-tesseract}
     VIETOCR_MODEL: ${VIETOCR_MODEL:-vgg_transformer}
     VIETOCR_DEVICE: ${VIETOCR_DEVICE:-cpu}
     VIETOCR_FORCE: ${VIETOCR_FORCE:-false}

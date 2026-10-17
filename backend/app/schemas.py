@@ -17,6 +17,39 @@ class AssignmentInput(Input):
     document_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
+class AssignmentItemInput(Input):
+    item_type: Literal["reading", "social", "literary", "other"] = "other"
+    label: str = Field(min_length=1, max_length=200)
+    prompt: str = Field(min_length=1, max_length=30000)
+    context: str = Field(default="", max_length=50000)
+    source_pages: list[int] = Field(default_factory=list, max_length=30)
+    metadata: dict = Field(default_factory=dict)
+
+
+class MultiAssignmentInput(Input):
+    title: str = Field(min_length=5, max_length=300)
+    prompt: str = Field(default="", max_length=30000)
+    task_type: Literal["reading", "social", "literary", "mixed"] = "mixed"
+    source_text: str = Field(default="", max_length=150000)
+    document_id: str | None = Field(default=None, min_length=1, max_length=100)
+    items: list[AssignmentItemInput] = Field(min_length=1, max_length=100)
+
+
+class SessionTurnInput(Input):
+    session_item_id: str = Field(min_length=1, max_length=100)
+    role: Literal["student", "tutor", "hint", "system"]
+    kind: str = Field(min_length=1, max_length=50)
+    text: str = Field(min_length=1, max_length=50000)
+    bloom_level: int | None = Field(default=None, ge=1, le=6)
+    strategy: str | None = Field(default=None, max_length=100)
+    objective: str | None = Field(default=None, max_length=500)
+    metadata: dict = Field(default_factory=dict)
+
+
+class SessionItemStatusInput(Input):
+    status: Literal["pending", "active", "completed", "skipped"]
+
+
 class SourcePageInput(Input):
     number: int = Field(ge=1, le=30)
     label: str = Field(min_length=1, max_length=100)

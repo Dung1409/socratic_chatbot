@@ -17,7 +17,8 @@ from .auth import AuthService, Principal, UNSAFE_METHODS, auth_router
 from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, extract_image_batch, validate_upload
 from .structure import structure_text
 from .jobs import JobQueue
-from .schemas import AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput
+from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput,
+                      MultiAssignmentInput, SessionTurnInput, SessionItemStatusInput)
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 from .ai_tutor import OpenAITutor
 from .adaptive import AdaptiveSessions, public_pending
@@ -116,6 +117,151 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             raise HTTPException(503, "Database hoặc kho tệp chưa sẵn sàng") from exc
         return {"status": "ready", "database": "postgresql" if db.postgres else "sqlite",
                 "background_jobs": background_jobs}
+
+    def _row_dict(row):
+        return dict(row) if row is not None else None
+
+    def _decode_json(value, fallback):
+        if value in (None, ""):
+            return fallback
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    def _multi_assignment(conn, assignment_id, owner_id):
+        row = db.execute(conn, "SELECT * FROM assignments WHERE id=? AND owner_id=?",
+                         (assignment_id, owner_id)).fetchone()
+        if row is None:
+            raise HTTPException(404, "Không tìm thấy đề bài")
+        assignment = _row_dict(row)
+        assignment["items"] = []
+        for item_row in db.execute(conn, "SELECT * FROM assignment_items WHERE assignment_id=? ORDER BY item_order",
+                                   (assignment_id,)).fetchall():
+            item = _row_dict(item_row)
+            item["source_pages"] = _decode_json(item["source_pages"], [])
+            item["metadata"] = _decode_json(item.pop("metadata_json", None), {})
+            assignment["items"].append(item)
+        return assignment
+
+    @app.post("/api/learning/assignments", status_code=201, tags=["Multi-question learning"])
+    def create_multi_assignment(body: MultiAssignmentInput, user: Principal = Depends(auth.current_user)):
+        assignment_id = str(uuid4())
+        now_value = now()
+        with db.connect(write=True) as conn:
+            if body.document_id and queue.document(body.document_id, owner_id=user.id) is None:
+                raise HTTPException(404, "Không tìm thấy tài liệu")
+            db.execute(conn, """INSERT INTO assignments
+                (id, owner_id, title, prompt, task_type, source_text, document_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (assignment_id, user.id, body.title, body.prompt, body.task_type,
+                        body.source_text, body.document_id, now_value, now_value))
+            for order, item in enumerate(body.items, start=1):
+                db.execute(conn, """INSERT INTO assignment_items
+                    (id, assignment_id, item_order, item_type, label, prompt, context, source_pages, metadata_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           (str(uuid4()), assignment_id, order, item.item_type, item.label, item.prompt,
+                            item.context, json.dumps(item.source_pages), json.dumps(item.metadata, ensure_ascii=False), now_value))
+            return _multi_assignment(conn, assignment_id, user.id)
+
+    @app.get("/api/learning/assignments/{assignment_id}", tags=["Multi-question learning"])
+    def get_multi_assignment(assignment_id: str, user: Principal = Depends(auth.current_user)):
+        with db.connect() as conn:
+            return _multi_assignment(conn, assignment_id, user.id)
+
+    @app.post("/api/learning/assignments/{assignment_id}/sessions", status_code=201,
+              tags=["Multi-question learning"])
+    def create_learning_session(assignment_id: str, user: Principal = Depends(auth.current_user)):
+        session_id = str(uuid4())
+        now_value = now()
+        with db.connect(write=True) as conn:
+            assignment = _multi_assignment(conn, assignment_id, user.id)
+            existing = db.execute(conn, "SELECT id FROM learning_sessions WHERE assignment_id=? AND owner_id=?",
+                                   (assignment_id, user.id)).fetchone()
+            if existing:
+                return _session_payload(conn, existing["id"], user.id)
+            db.execute(conn, """INSERT INTO learning_sessions
+                (id, assignment_id, owner_id, active_item_order, created_at, updated_at)
+                VALUES (?, ?, ?, 1, ?, ?)""", (session_id, assignment_id, user.id, now_value, now_value))
+            for order, item in enumerate(assignment["items"], start=1):
+                db.execute(conn, """INSERT INTO session_items
+                    (id, session_id, assignment_item_id, item_order)
+                    VALUES (?, ?, ?, ?)""", (str(uuid4()), session_id, item["id"], order))
+        return get_learning_session(session_id, user)
+
+    def _session_payload(conn, session_id, owner_id):
+        session_row = db.execute(conn, "SELECT * FROM learning_sessions WHERE id=? AND owner_id=?",
+                                 (session_id, owner_id)).fetchone()
+        if session_row is None:
+            raise HTTPException(404, "Không tìm thấy phiên học")
+        session = _row_dict(session_row)
+        session["items"] = []
+        rows = db.execute(conn, """SELECT si.*, ai.label, ai.item_type, ai.prompt, ai.context, ai.source_pages
+            FROM session_items si JOIN assignment_items ai ON ai.id=si.assignment_item_id
+            WHERE si.session_id=? ORDER BY si.item_order""", (session_id,)).fetchall()
+        for row in rows:
+            item = _row_dict(row)
+            item["source_pages"] = _decode_json(item["source_pages"], [])
+            item["turns"] = [_row_dict(turn) for turn in db.execute(
+                "SELECT * FROM session_turns WHERE session_item_id=? ORDER BY turn_order", (item["id"],)).fetchall()]
+            session["items"].append(item)
+        return session
+
+    @app.get("/api/learning/sessions/{session_id}", tags=["Multi-question learning"])
+    def get_learning_session(session_id: str, user: Principal = Depends(auth.current_user)):
+        with db.connect() as conn:
+            return _session_payload(conn, session_id, user.id)
+
+    @app.post("/api/learning/sessions/{session_id}/turns", status_code=201,
+              tags=["Multi-question learning"])
+    def add_learning_turn(session_id: str, body: SessionTurnInput,
+                          user: Principal = Depends(auth.current_user)):
+        with db.connect(write=True) as conn:
+            owned = db.execute(conn, """SELECT si.id FROM session_items si
+                JOIN learning_sessions ls ON ls.id=si.session_id
+                WHERE si.id=? AND si.session_id=? AND ls.owner_id=?""",
+                               (body.session_item_id, session_id, user.id)).fetchone()
+            if owned is None:
+                raise HTTPException(404, "Không tìm thấy câu trong phiên học")
+            next_order = db.execute(conn, "SELECT COALESCE(MAX(turn_order), 0)+1 AS next_order FROM session_turns WHERE session_item_id=?",
+                                    (body.session_item_id,)).fetchone()["next_order"]
+            turn_id = str(uuid4())
+            db.execute(conn, """INSERT INTO session_turns
+                (id, session_item_id, turn_order, role, kind, text, bloom_level, strategy, objective, metadata_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (turn_id, body.session_item_id, next_order, body.role, body.kind, body.text,
+                        body.bloom_level, body.strategy, body.objective,
+                        json.dumps(body.metadata, ensure_ascii=False), now()))
+            return _row_dict(db.execute(conn, "SELECT * FROM session_turns WHERE id=?", (turn_id,)).fetchone())
+
+    @app.patch("/api/learning/session-items/{session_item_id}", tags=["Multi-question learning"])
+    def update_learning_item(session_item_id: str, body: SessionItemStatusInput,
+                             user: Principal = Depends(auth.current_user)):
+        with db.connect(write=True) as conn:
+            row = db.execute(conn, """SELECT si.session_id, si.item_order, ls.assignment_id FROM session_items si
+                JOIN learning_sessions ls ON ls.id=si.session_id
+                WHERE si.id=? AND ls.owner_id=?""", (session_item_id, user.id)).fetchone()
+            if row is None:
+                raise HTTPException(404, "Không tìm thấy câu trong phiên học")
+            now_value = now()
+            db.execute(conn, """UPDATE session_items SET status=?,
+                started_at=CASE WHEN ?='active' AND started_at IS NULL THEN ? ELSE started_at END,
+                completed_at=CASE WHEN ?='completed' THEN ? ELSE completed_at END
+                WHERE id=?""", (body.status, body.status, now_value, body.status, now_value, session_item_id))
+            if body.status == "active":
+                db.execute(conn, "UPDATE learning_sessions SET active_item_order=?, updated_at=? WHERE id=?",
+                           (row["item_order"], now_value, row["session_id"]))
+            db.execute(conn, """UPDATE learning_sessions SET updated_at=? WHERE id=?""", (now_value, row["session_id"]))
+            counts = db.execute(conn, """SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed
+                FROM session_items WHERE session_id=?""", (row["session_id"],)).fetchone()
+            total = counts["total"] or 0
+            completed = counts["completed"] or 0
+            progress = round(completed * 100 / total) if total else 0
+            db.execute(conn, """UPDATE assignments SET progress=?, status=?, updated_at=? WHERE id=? AND owner_id=?""",
+                       (progress, "completed" if progress == 100 else "active", now_value,
+                        row["assignment_id"], user.id))
+            return _session_payload(conn, row["session_id"], user.id)
 
     @app.get("/api/assignments", tags=["Assignments"])
     def assignments(user: Principal = Depends(auth.current_user)):

@@ -74,6 +74,10 @@ class SessionInput(Input):
     assignment_id: str = Field(min_length=1, max_length=100)
 
 
+class SessionSelectItemInput(Input):
+    item_id: str = Field(min_length=1, max_length=100)
+
+
 class ActionInput(Input):
     client_message_id: str = Field(min_length=1, max_length=100)
     expected_version: int = Field(ge=0)

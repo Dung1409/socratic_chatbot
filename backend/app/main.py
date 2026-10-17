@@ -18,7 +18,7 @@ from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, extra
 from .structure import structure_text
 from .jobs import JobQueue
 from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput,
-                      MultiAssignmentInput, SessionTurnInput, SessionItemStatusInput)
+                      MultiAssignmentInput, SessionTurnInput, SessionItemStatusInput, SessionSelectItemInput)
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 from .ai_tutor import OpenAITutor
 from .adaptive import AdaptiveSessions, public_pending
@@ -365,13 +365,14 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 row = db.execute(conn, "SELECT * FROM assignments WHERE id=? AND owner_id=?",
                                  (body.assignment_id, user.id)).fetchone()
                 if row is not None:
-                    items = db.execute(conn, """SELECT label, prompt, context, item_order
+                    items = db.execute(conn, """SELECT id, label, prompt, context, item_type, item_order
                         FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
                                        (body.assignment_id,)).fetchall()
                     assignment = {
                         "id": row["id"], "title": row["title"],
                         "prompt": "\n\n".join(
                             f"{item['label']}: {item['prompt']}" for item in items),
+                        "items": [dict(item) for item in items],
                         "source_text": row["source_text"], "source": "student",
                         "target": 4, "status": "Chưa bắt đầu",
                     }
@@ -401,6 +402,30 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 "created_at": now(), "updated_at": now(), "tutor_mode": "template",
             }
             db.put(conn, "sessions", session["id"], session, owner_id=user.id)
+            return public_session(session)
+
+    @app.post("/api/sessions/{session_id}/select-item", tags=["Sessions"])
+    def select_session_item(session_id: str, body: SessionSelectItemInput,
+                            user: Principal = Depends(auth.current_user)):
+        with db.connect(write=True) as conn:
+            session = require(conn, "sessions", session_id, user.id)
+            assignment_id = session.get("assignment_id")
+            item = db.execute(conn, """SELECT id, label, prompt, context, item_type
+                FROM assignment_items WHERE id=? AND assignment_id=?""",
+                              (body.item_id, assignment_id)).fetchone()
+            if item is None:
+                raise HTTPException(404, "Không tìm thấy câu hỏi đã chọn")
+            assignment = dict(session.get("assignment") or {})
+            assignment["prompt"] = item["prompt"]
+            assignment["task_type"] = item["item_type"] if item["item_type"] in {"reading", "social"} else "social"
+            assignment["active_item_id"] = item["id"]
+            session["assignment"] = assignment
+            session["steps"] = lesson_steps(assignment)
+            session["step"] = 0
+            session["done"] = False
+            session["updated_at"] = now()
+            session["version"] += 1
+            db.put(conn, "sessions", session_id, session, owner_id=user.id)
             return public_session(session)
 
     @app.get("/api/sessions", tags=["Sessions"])

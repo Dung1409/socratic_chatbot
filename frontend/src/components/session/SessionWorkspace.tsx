@@ -20,9 +20,9 @@ import {
 import { type Session } from "@/lib/api";
 import { LearningPanel } from "./LearningPanel";
 
-type Props = { session: Session; children: ReactNode; composer?: ReactNode; activity?: boolean };
+type Props = { session: Session; children: ReactNode; composer?: ReactNode; activity?: boolean; onSelectItem?: (itemId: string) => void };
 
-export function SessionWorkspace({ session, children, composer, activity = false }: Props) {
+export function SessionWorkspace({ session, children, composer, activity = false, onSelectItem }: Props) {
   const [panelOpen, setPanelOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -105,7 +105,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
         aria-label="Không gian đối thoại Socratic"
       >
         <header className="learning-session-header shrink-0 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
-          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center justify-between gap-3">
             <div className="min-w-0">
               <h1 className="truncate text-lg font-semibold leading-7" title={assignment.title}>
                 {assignment.title}
@@ -199,6 +199,18 @@ export function SessionWorkspace({ session, children, composer, activity = false
                 )}
               </Button>
             </div>
+          {assignment.items && assignment.items.length > 1 && onSelectItem && (
+            <label className="mt-3 block max-w-2xl text-xs font-medium text-muted-foreground">
+              Câu đang học
+              <select
+                className="mt-1 block h-10 w-full rounded-md border bg-background px-3 text-sm font-normal text-foreground"
+                value={assignment.active_item_id ?? assignment.items[0]?.id}
+                onChange={(event) => onSelectItem(event.target.value)}
+              >
+                {assignment.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </label>
+          )}
           </div>
         </header>
         <div className="relative flex min-h-0 flex-1 flex-col">

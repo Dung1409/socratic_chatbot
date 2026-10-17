@@ -13,6 +13,15 @@ export type Assignment = {
   progress: number;
   task_type?: "reading" | "social";
   source_text?: string;
+  items?: AssignmentItem[];
+  active_item_id?: string;
+};
+export type AssignmentItem = {
+  id: string;
+  label: string;
+  prompt: string;
+  context?: string;
+  item_type?: "reading" | "social" | "literary" | "other";
 };
 export type Step = { level: number; q: string; hints: string[] };
 export type Turn = (
@@ -351,6 +360,8 @@ export const api = {
   sessions: () => request<Session[]>("/sessions"),
   session: (id: string) => request<Session>(`/sessions/${id}`),
   start: (id: string) => post<Session>("/sessions", { assignment_id: id }),
+  selectSessionItem: (sessionId: string, itemId: string) =>
+    post<Session>(`/sessions/${sessionId}/select-item`, { item_id: itemId }),
   message: (session: Session, text: string, key: string) =>
     post<Session>(`/sessions/${session.id}/messages`, {
       text,

@@ -45,6 +45,18 @@ export function AdaptiveSessionView({
   );
   const answers = session.turns.filter((t) => t.kind === "student" && t.purpose !== "source");
   const blocked = busy || Boolean(pending);
+  const selectItem = async (itemId: string) => {
+    if (blocked || itemId === session.assignment.active_item_id) return;
+    setBusy(true);
+    try {
+      saveSession(await api.selectSessionItem(session.id, itemId));
+      toast.success("Đã chuyển sang câu hỏi đã chọn");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không chuyển được câu hỏi");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const saveSession = (saved: Session) => {
     client.setQueryData(queryKey, saved);
@@ -114,6 +126,7 @@ export function AdaptiveSessionView({
     <SessionWorkspace
       session={session}
       activity={busy}
+      onSelectItem={(itemId) => void selectItem(itemId)}
       composer={
         !session.submitted ? (
           <SessionComposer

@@ -45,7 +45,7 @@ def test_register_hashes_password_and_only_sends_tokens_in_httponly_cookies(brow
     assert len(cookies) == 2
     assert all("HttpOnly" in cookie and "SameSite=lax" in cookie for cookie in cookies)
     assert any("Path=/api/auth" in cookie for cookie in cookies)
-    assert response.headers["cache-control"] == "no-store"
+    assert "no-store" in response.headers["cache-control"]
     with database.connect() as conn:
         user = database.execute(conn, "SELECT password_hash FROM users WHERE email=?", ("student@example.com",)).fetchone()
     assert user["password_hash"].startswith("$argon2id$")

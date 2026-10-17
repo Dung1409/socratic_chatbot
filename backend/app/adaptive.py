@@ -65,11 +65,13 @@ def response_turn(reply, session, requested=False):
 
 
 class AdaptiveSessions:
-    def __init__(self, db, tutor):
+    def __init__(self, db, tutor, before_ai_call=None):
         self.db, self.tutor = db, tutor
+        self.before_ai_call = before_ai_call or (lambda owner_id: None)
 
     def start(self, assignment, owner_id):
         # Duplicate starts may compute two plans, but only one session is ever committed.
+        self.before_ai_call(owner_id)
         try:
             plan = self.tutor.plan(assignment)
         except TutorError as exc:
@@ -175,6 +177,7 @@ class AdaptiveSessions:
         # Input is durable in pending_action before contacting the provider.
         working = copy.deepcopy(session)
         try:
+            self.before_ai_call(owner_id)
             if action == "submit":
                 draft = self.tutor.assess(working, body.essay)
                 report = build_report(draft, working, body.essay, working["assessment_model"])
@@ -198,6 +201,8 @@ class AdaptiveSessions:
                     self.db.put(conn, "sessions", session_id, current, owner_id=owner_id)
             if isinstance(exc, TutorError):
                 raise HTTPException(exc.status, str(exc)) from exc
+            if isinstance(exc, HTTPException):
+                raise
             if isinstance(exc, ValueError):
                 raise HTTPException(502, "Bằng chứng hoặc điểm AI trả về chưa hợp lệ. Bài làm được giữ để thử lại.") from exc
             raise HTTPException(502, "Không hoàn tất được phản hồi AI. Nội dung được giữ để thử lại.") from exc

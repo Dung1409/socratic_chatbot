@@ -3,6 +3,7 @@ x-backend: &backend
     context: ./backend
     dockerfile: Dockerfile
   environment: &backend_environment
+    APP_ENV: development
     PGHOST: postgres
     PGPORT: "5432"
     PGDATABASE: ${POSTGRES_DB:-socratic}
@@ -14,7 +15,7 @@ x-backend: &backend
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     OPENAI_TUTOR_MODEL: ${OPENAI_TUTOR_MODEL:-gpt-6.1-sol}
     OPENAI_ASSESSMENT_MODEL: ${OPENAI_ASSESSMENT_MODEL:-gpt-6.1-sol}
-    DOCUMENT_AI_PROVIDER: ${DOCUMENT_AI_PROVIDER:-gemini}
+    DOCUMENT_AI_PROVIDER: ${DOCUMENT_AI_PROVIDER:-openai}
     DOCUMENT_AI_MODEL: ${DOCUMENT_AI_MODEL:-gpt-5-mini}
     STORAGE_PATH: /app/storage
     JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file before starting the stack}
@@ -23,7 +24,7 @@ x-backend: &backend
   volumes:
     - socratic_files:/app/storage
   init: true
-  stop_grace_period: 30s
+  stop_grace_period: 150s
 
 services:
   postgres:
@@ -57,8 +58,6 @@ services:
     <<: *backend
     environment:
       <<: *backend_environment
-      GG_API_KEY: ${GG_API_KEY:-}
-      GEMINI_DOCUMENT_MODEL: ${GEMINI_DOCUMENT_MODEL:-gemini-flash-latest}
     ports:
       - "127.0.0.1:${BE_PORT:-8000}:8000"
     depends_on:
@@ -72,8 +71,6 @@ services:
     <<: *backend
     environment:
       <<: *backend_environment
-      GG_API_KEY: ${GG_API_KEY:-}
-      GEMINI_DOCUMENT_MODEL: ${GEMINI_DOCUMENT_MODEL:-gemini-flash-latest}
     command: ["python", "-m", "backend.app.worker"]
     depends_on:
       postgres:

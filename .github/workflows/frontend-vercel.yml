@@ -60,6 +60,10 @@ jobs:
               exit 1
             fi
           done
+          if grep -q 'YOUR-BACKEND-DOMAIN.invalid' frontend/vercel.json; then
+            echo "Set the backend HTTPS origin in frontend/vercel.json before deploying" >&2
+            exit 1
+          fi
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
       - name: Pull Vercel environment

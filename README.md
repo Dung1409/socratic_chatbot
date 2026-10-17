@@ -6,6 +6,22 @@ Giao diện phát triển từ [Toan0409/bloom-guided-scribe](https://github.com
 
 ## Kết nối OpenAI và đánh giá tư duy
 
+Hướng dẫn production: [Northflank + Vercel](docs/DEPLOY_NORTHFLANK_VERCEL.md).
+Docker image mặc định `APP_ENV=production`; Compose đặt rõ `development` cho local.
+Production bắt buộc PostgreSQL, Secure cookie, origin allowlist và migration Job riêng;
+proxy allowlist chỉ bắt buộc khi bật `TRUST_PROXY_HEADERS=true`.
+Northflank Free: một Deployment Service `socratic-api` đặt `RUN_MODE=combined`, chạy một
+API và một worker trong cùng container, dùng volume `socratic-files` 6 GB ReadWriteOnce
+mount `/app/storage`; không tạo Worker Service riêng. CMD mới là
+`python -m backend.app.entrypoint`; có thể override bằng `python -m backend.app.combined`.
+Đặt `AUTO_MIGRATE=false`, `BACKGROUND_JOBS=true`, `SHUTDOWN_GRACE_SECONDS=120` và termination
+grace của nền tảng 150 giây. Probe: `python -m backend.app.healthcheck`.
+Staging chưa xác minh ingress: đặt `TRUST_PROXY_HEADERS=false`, bỏ `FORWARDED_ALLOW_IPS`,
+đặt `PUBLIC_API_ORIGIN=https://<frontend-staging>` để redirect/URL dùng HTTPS từ cấu hình tĩnh.
+Cookie vẫn Secure; login/register có thể dùng chung bucket IP ingress, xem giới hạn trong tài liệu deploy.
+Mặc định image vẫn `RUN_MODE=api`; `RUN_MODE=worker` và command migration độc lập vẫn dùng được.
+Docker Compose local bên dưới vẫn minh họa cách chạy API/worker thành service riêng.
+
 Sau khi khởi tạo môi trường, cấu hình `OPENAI_API_KEY` trong `.env` gốc trước khi bắt đầu phiên AI. Backend tự đọc `.env`; biến môi trường tiến trình có ưu tiên cao hơn. Khóa chỉ dùng ở backend, không đưa vào frontend hoặc Git.
 
 ```dotenv
@@ -55,7 +71,7 @@ Hoặc chạy hai terminal riêng để backend tự tải lại khi sửa code:
 ```powershell
 # Terminal 1, tại thư mục gốc
 $env:JWT_SECRET = .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
-.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
 ```powershell
@@ -233,7 +249,7 @@ Xem cấu hình mẫu ở `.env.example`, `backend/.env.example` và `frontend/.
 
 ```powershell
 npm --prefix frontend run build
-.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m backend.app.entrypoint
 ```
 
 FastAPI phục vụ cả `frontend/dist` và API tại http://127.0.0.1:8000. Phải khởi động lại backend sau khi build để nhận thư mục `dist`. Giao diện chạy React SPA, không cần server Node.js khi phục vụ bản build.

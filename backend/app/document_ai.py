@@ -1,8 +1,8 @@
 """Provider-neutral document understanding adapter.
 
-Extraction depends on this module instead of a vendor SDK. Set
-DOCUMENT_AI_PROVIDER to ``openai`` for production (GPT-5 mini) or ``gemini``
-for the local Gemini path.
+Extraction depends on this module instead of a vendor SDK. OpenAI is the
+default for images and documents; the Gemini path remains available only
+when explicitly selected for legacy use.
 """
 
 import base64
@@ -13,7 +13,7 @@ from . import gemini
 
 
 def provider() -> str:
-    return os.getenv("DOCUMENT_AI_PROVIDER", "gemini").strip().lower()
+    return os.getenv("DOCUMENT_AI_PROVIDER", "openai").strip().lower()
 
 
 def enabled() -> bool:

@@ -127,6 +127,10 @@ export type AuthUser = { id: string; email: string; display_name: string };
 export type AuthSession = { user: AuthUser; csrf_token: string };
 let csrfToken: string | null = null;
 let refreshPromise: Promise<AuthSession> | null = null;
+// Production uses Vercel's same-origin rewrite so host-only cookies keep working.
+const apiOrigin = import.meta.env.PROD
+  ? ""
+  : (import.meta.env["VITE_API_URL"] || "").replace(/\/$/, "");
 
 export function clearAuthState() {
   csrfToken = null;
@@ -144,7 +148,7 @@ export class ApiError extends Error {
 async function send(path: string, options?: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(`${import.meta.env["VITE_API_URL"] || ""}/api${path}`, {
+    response = await fetch(`${apiOrigin}/api${path}`, {
       ...options,
       credentials: "include",
       headers: {
@@ -158,7 +162,7 @@ async function send(path: string, options?: RequestInit): Promise<Response> {
       },
     });
   } catch {
-    throw new ApiError("Không kết nối được backend. Kiểm tra FastAPI đang chạy ở cổng 8000.", 0);
+    throw new ApiError("Không kết nối được hệ thống. Vui lòng kiểm tra kết nối và thử lại.", 0);
   }
   return response;
 }

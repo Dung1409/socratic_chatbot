@@ -4,10 +4,16 @@ import io
 
 from PIL import Image
 from fastapi.testclient import TestClient
+import pytest
 
 from backend.app import extraction, gemini
 from backend.app.main import create_app
 from backend.app.structure import structure_text
+
+
+@pytest.fixture(autouse=True)
+def legacy_gemini_provider(monkeypatch):
+    monkeypatch.setenv("DOCUMENT_AI_PROVIDER", "gemini")
 
 
 def _png() -> bytes:

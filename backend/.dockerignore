@@ -2,6 +2,14 @@
 .venv
 .env
 .env.*
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/secrets
+.aws
+.agents
+.codex
 **/__pycache__
 **/*.py[cod]
 **/*.db

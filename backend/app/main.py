@@ -1,14 +1,15 @@
 import hashlib
 import json
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from dotenv import load_dotenv
-
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -22,9 +23,11 @@ from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 from .ai_tutor import OpenAITutor
 from .adaptive import AdaptiveSessions, public_pending
+from . import config
+from .proxy import PublicOriginMiddleware
 
-ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT / ".env", override=False)
+ROOT = config.ROOT
+logger = logging.getLogger("socratic.api")
 
 
 def now():
@@ -53,24 +56,31 @@ def saved_sessions(conn, owner_id):
 def create_app(database_path: str | None = None, frontend_dist: Path | None = None,
                storage_path: Path | None = None, tutor_engine=None):
     db = Database(database_path) if database_path else Database.from_env()
-    background_jobs = os.getenv("BACKGROUND_JOBS", "false").lower() == "true"
-    queue = JobQueue(db, storage_path or Path(os.getenv("STORAGE_PATH", str(ROOT / "backend/data/uploads"))))
+    background_jobs = config.boolean("BACKGROUND_JOBS", False)
+    queue = JobQueue(db, storage_path or config.storage_path())
     auth = AuthService(db)
     tutor = tutor_engine or OpenAITutor()
     tutor_mode = os.getenv("TUTOR_MODE", "openai")
     if tutor_mode not in ("openai", "template"):
         raise ValueError("TUTOR_MODE must be openai or template")
-    adaptive = AdaptiveSessions(db, tutor)
+    adaptive = AdaptiveSessions(db, tutor, before_ai_call=lambda owner: auth.resource_limit(owner, "ai"))
 
     @asynccontextmanager
     async def lifespan(app):
+        config.configure_logging()
+        config.validate_runtime(db)
         auth.configure()
-        if os.getenv("AUTO_MIGRATE", "true").lower() == "true":
+        if config.auto_migrate():
             db.initialize()
         else:
             db.check_ready()
         if background_jobs:
             queue.storage_path.mkdir(parents=True, exist_ok=True)
+            config.check_storage(queue.storage_path)
+        logger.info("API started database=%s background_jobs=%s", "postgresql" if db.postgres else "sqlite", background_jobs)
+        if not config.trust_proxy_headers():
+            logger.warning("Proxy headers are disabled; client IP may be the ingress peer, not a learner. "
+                           "Authentication IP limits are shared per peer; email, global and user limits remain active.")
         yield
 
     app = FastAPI(title="SocraVăn API", version="0.1.0", lifespan=lifespan,
@@ -78,26 +88,52 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     app.state.db = db
     app.state.queue = queue
     app.state.auth = auth
-    origins = [value.strip().rstrip("/") for value in os.getenv(
+    public_origin = config.public_api_origin()
+    if public_origin:
+        app.add_middleware(PublicOriginMiddleware, origin=public_origin)
+    origins = config.origins(
         "AUTH_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000"
-    ).split(",") if value.strip()]
-    app.add_middleware(CORSMiddleware, allow_origins=os.getenv(
-        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-    ).split(","), allow_credentials=True, allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Content-Type", "X-CSRF-Token"])
+        "" if config.production() else "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000")
+    cors_origins = config.origins("CORS_ORIGINS", "" if config.production() else "http://localhost:5173,http://127.0.0.1:5173")
+    if config.production() and not set(cors_origins).issubset(origins):
+        raise RuntimeError("CORS_ORIGINS must be included in AUTH_ALLOWED_ORIGINS")
+    app.add_middleware(CORSMiddleware, allow_origins=cors_origins,
+        allow_credentials=True, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "X-CSRF-Token"], expose_headers=["Retry-After", "X-Request-ID"])
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        # Pydantic's input/ctx may contain passwords, essays or other private data.
+        errors = [{key: error[key] for key in ("type", "loc", "msg") if key in error} for error in exc.errors()]
+        return JSONResponse({"detail": errors}, status_code=422)
 
     @app.middleware("http")
     async def protect_browser_requests(request: Request, call_next):
+        started = time.monotonic()
+        request_id = str(uuid4())
+        response = None
         if request.url.path.startswith("/api/") and request.method in UNSAFE_METHODS:
             origin = request.headers.get("origin")
             if (origin is not None and origin.rstrip("/") not in origins) or (
                     origin is None and request.headers.get("sec-fetch-site") == "cross-site"):
-                return JSONResponse({"detail": "Nguồn yêu cầu không được phép."}, status_code=403)
-        response = await call_next(request)
-        if request.url.path.startswith("/api/auth/"):
-            response.headers["Cache-Control"] = "no-store"
+                response = JSONResponse({"detail": "Nguồn yêu cầu không được phép."}, status_code=403)
+        if response is None:
+            try:
+                response = await call_next(request)
+            except Exception as exc:
+                logger.error("Request failed request_id=%s error_type=%s", request_id, type(exc).__name__)
+                response = JSONResponse({"detail": "Hệ thống chưa xử lý được yêu cầu. Vui lòng thử lại."}, status_code=500)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["CDN-Cache-Control"] = "no-store"
+            response.headers["Vercel-CDN-Cache-Control"] = "no-store"
             response.headers["Pragma"] = "no-cache"
+            response.headers["X-Request-ID"] = request_id
+            if request.url.path not in {"/api/health", "/api/ready"}:
+                route = getattr(request.scope.get("route"), "path", "unmatched")
+                logger.info("request_id=%s method=%s route=%s status=%s duration_ms=%s",
+                            request_id, request.method, route, response.status_code,
+                            round((time.monotonic() - started) * 1000))
         return response
 
     app.include_router(auth_router(auth))
@@ -111,8 +147,13 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def ready():
         try:
             db.check_ready()
-            if background_jobs and not os.access(queue.storage_path, os.W_OK):
-                raise RuntimeError("Storage is not writable")
+            if background_jobs:
+                config.check_storage(queue.storage_path)
+            if config.run_mode() == "combined":
+                from .combined import check_health
+                check_health()
+            if config.production() and tutor_mode == "openai" and not tutor.configured:
+                raise RuntimeError("AI is not configured")
         except Exception as exc:
             raise HTTPException(503, "Database hoặc kho tệp chưa sẵn sàng") from exc
         return {"status": "ready", "database": "postgresql" if db.postgres else "sqlite",
@@ -291,6 +332,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
 
     @app.post("/api/uploads/extract", tags=["Assignments"])
     def extract(file: UploadFile = File(...), user: Principal = Depends(auth.current_user)):
+        auth.resource_limit(user.id, "upload")
         filename, data = read_upload(file)
         if background_jobs:
             return JSONResponse(queue.submit(filename, data, owner_id=user.id), status_code=202)
@@ -344,6 +386,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
 
     @app.post("/api/documents", status_code=202, tags=["Documents"])
     def upload_document(file: UploadFile = File(...), user: Principal = Depends(auth.current_user)):
+        auth.resource_limit(user.id, "upload")
         filename, data = read_upload(file)
         return queue.submit(filename, data, owner_id=user.id)
 

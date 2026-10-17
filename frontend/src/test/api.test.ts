@@ -104,7 +104,7 @@ describe("FastAPI client", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     await expect(api.assignments()).rejects.toMatchObject({
       status: 0,
-      message: expect.stringContaining("FastAPI"),
+      message: expect.stringContaining("Không kết nối được hệ thống"),
     });
   });
   it("preserves validation and conflict messages", async () => {

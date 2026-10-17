@@ -9,6 +9,14 @@ from backend.app.db import Database
 
 @pytest.fixture(autouse=True)
 def auth_settings(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    # Child parser processes inherit these values and must not load local API keys.
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("GG_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setenv("TRUST_PROXY_HEADERS", "false")
+    monkeypatch.setenv("AI_REQUESTS_PER_HOUR", "1000")
+    monkeypatch.setenv("UPLOADS_PER_HOUR", "1000")
     monkeypatch.setenv("TUTOR_MODE", "template")
     monkeypatch.setenv("JWT_SECRET", "test-only-signing-key-with-more-than-thirty-two-bytes")
     monkeypatch.setenv("AUTH_COOKIE_SECURE", "false")

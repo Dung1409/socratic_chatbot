@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { BLOOM, bloomColor } from "@/lib/data";
 import { seo } from "@/lib/seo";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/AuthProvider";
 
 export const Route = createFileRoute("/phien-hoc")({
   validateSearch: (search: Record<string, unknown>): { assignment?: string } =>
@@ -67,14 +68,15 @@ function Session() {
 
 function SessionView({ session, queryKey }: { session: SavedSession; queryKey: string[] }) {
   const client = useQueryClient();
+  const { user } = useAuth();
+  const draftKey = `socratic:${user?.id}:draft:${session.id}`;
+  const essayKey = `socratic:${user?.id}:essay:${session.id}`;
   const a = session.assignment;
   const { step, done, submitted, turns } = session;
   const hintTier = session.hint_tier;
   const socraticSteps = session.steps;
-  const [draft, setDraft] = useState(() => localStorage.getItem(`draft:${session.id}`) || "");
-  const [essay, setEssay] = useState(
-    () => localStorage.getItem(`essay:${session.id}`) || session.essay,
-  );
+  const [draft, setDraft] = useState(() => sessionStorage.getItem(draftKey) || "");
+  const [essay, setEssay] = useState(() => sessionStorage.getItem(essayKey) || session.essay);
   const [busy, setBusy] = useState(false);
   const pending = useRef<{ type: string; text: string; key: string; session: SavedSession } | null>(
     null,
@@ -110,10 +112,10 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
       pending.current = null;
       if (type === "message") {
         setDraft("");
-        localStorage.removeItem(`draft:${session.id}`);
+        sessionStorage.removeItem(draftKey);
       }
       if (type === "submit") {
-        localStorage.removeItem(`essay:${session.id}`);
+        sessionStorage.removeItem(essayKey);
         toast.success("Đã lưu bài viết và hoàn thành phiên tự học");
       }
       void client.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "session" });
@@ -238,7 +240,7 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
                     value={essay}
                     onChange={(e) => {
                       setEssay(e.target.value);
-                      localStorage.setItem(`essay:${session.id}`, e.target.value);
+                      sessionStorage.setItem(essayKey, e.target.value);
                     }}
                   />
                   <Button
@@ -271,7 +273,7 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
                 value={draft}
                 onChange={(e) => {
                   setDraft(e.target.value);
-                  localStorage.setItem(`draft:${session.id}`, e.target.value);
+                  sessionStorage.setItem(draftKey, e.target.value);
                 }}
                 placeholder="Viết suy nghĩ của em… (Ctrl + Enter để gửi)"
                 onKeyDown={(e) => {

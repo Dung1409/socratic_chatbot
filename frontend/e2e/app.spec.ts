@@ -1,4 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function register(page: Page, email: string, name: string) {
+  await page.goto("/dang-ky");
+  await page.getByLabel("Tên hiển thị").fill(name);
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill(email);
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
+  await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill("Strong test password 123");
+  await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
+  ).toBeVisible();
+}
 
 test("start from an empty workspace, study a personal assignment and save the final essay", async ({
   page,
@@ -6,6 +18,8 @@ test("start from an empty workspace, study a personal assignment and save the fi
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Chào mừng bạn trở lại" })).toBeVisible();
+  await register(page, "first-student@example.com", "Bạn thứ nhất");
   await expect(page.getByText("Bạn chưa có đề tự học.", { exact: false })).toBeVisible();
   await expect(page.getByRole("link", { name: "Lớp học", exact: true })).toHaveCount(0);
   await page.goto("/phien-hoc");
@@ -46,24 +60,21 @@ test("start from an empty workspace, study a personal assignment and save the fi
   await page.reload();
   await expect(page.getByPlaceholder("Viết bài làm của em…")).toHaveValue(essay);
   await page.getByRole("button", { name: "Lưu bài viết & hoàn thành" }).click();
-  await expect(
-    page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" })).toBeVisible();
   await page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" }).click();
   await expect(page.getByRole("heading", { name: "Tiến trình tự học" })).toBeVisible();
   await page.getByText("Bài viết cuối phiên", { exact: true }).click();
   await expect(page.getByText(essay, { exact: true })).toBeVisible();
   await expect(page.getByText("Chờ đánh giá", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Xem lại đối thoại" }).click();
-  await expect(
-    page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" })).toBeVisible();
   await page.goto("/giao-vien");
   await expect(page.getByRole("heading", { name: "Không tìm thấy trang" })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
 test("upload, edit extracted text before confirmation and navigate on mobile", async ({ page }) => {
+  await register(page, "second-student@example.com", "Bạn thứ hai");
   await page.goto("/de-bai");
   const before = await (await page.request.get("/api/assignments")).json();
   await page.getByLabel("Chọn tệp đề bài").setInputFiles({
@@ -92,4 +103,41 @@ test("upload, edit extracted text before confirmation and navigate on mobile", a
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBeTruthy();
   await page.screenshot({ path: "../artifacts/self-study-mobile.png", fullPage: true });
+});
+
+test("logout clears authentication, cookie JWTs stay unreadable, and login restores only your data", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/dang-nhap");
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill("first-student@example.com");
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("incorrect password");
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Email hoặc mật khẩu không đúng.");
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  await expect(page.getByText("Bạn thứ nhất", { exact: true })).toBeVisible();
+  await page.goto("/de-bai");
+  await expect(page.getByRole("heading", { name: "Tự học về ý nghĩa của đọc sách" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Đề riêng về trách nhiệm" })).toHaveCount(0);
+  const cookies = await context.cookies();
+  expect(
+    cookies
+      .filter((cookie) => cookie.name.startsWith("socratic_"))
+      .every((cookie) => cookie.httpOnly),
+  ).toBe(true);
+  expect(await page.evaluate(() => document.cookie)).not.toContain("socratic_access");
+  expect(await page.evaluate(() => document.cookie)).not.toContain("socratic_refresh");
+  expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
+  await context.clearCookies({ name: "socratic_access" });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Đề bài của tôi", exact: true })).toBeVisible();
+  expect((await context.cookies()).some((cookie) => cookie.name === "socratic_access")).toBe(true);
+  await page.getByRole("button", { name: "Đăng xuất", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Chào mừng bạn trở lại" })).toBeVisible();
+  expect((await context.cookies()).some((cookie) => cookie.name.startsWith("socratic_"))).toBe(
+    false,
+  );
+  await page.goto("/tien-trinh");
+  await expect(page.getByRole("heading", { name: "Chào mừng bạn trở lại" })).toBeVisible();
 });

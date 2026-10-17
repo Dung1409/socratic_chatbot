@@ -6,11 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from .db import Database
+from .auth import AuthService, Principal, UNSAFE_METHODS, auth_router
 from .extraction import ExtractionError, MAX_FILE_BYTES, extract_text, validate_upload
 from .jobs import JobQueue
 from .schemas import AssignmentInput, SessionInput, ActionInput, MessageInput, SubmissionInput
@@ -23,8 +24,8 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def require(conn, collection, identifier):
-    value = Database.get(conn, collection, identifier)
+def require(conn, collection, identifier, owner_id):
+    value = Database.get(conn, collection, identifier, owner_id=owner_id)
     if value is None:
         raise HTTPException(404, "Không tìm thấy dữ liệu")
     return value
@@ -35,8 +36,8 @@ def public_session(session):
             if key not in {"requests", "rubric", "review", "student_id", "student_name", "class_name"}}
 
 
-def saved_sessions(conn):
-    return sorted(Database.all(conn, "sessions"), key=lambda s: s["updated_at"], reverse=True)
+def saved_sessions(conn, owner_id):
+    return sorted(Database.all(conn, "sessions", owner_id=owner_id), key=lambda s: s["updated_at"], reverse=True)
 
 
 def create_app(database_path: str | None = None, frontend_dist: Path | None = None,
@@ -44,9 +45,11 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     db = Database(database_path) if database_path else Database.from_env()
     background_jobs = os.getenv("BACKGROUND_JOBS", "false").lower() == "true"
     queue = JobQueue(db, storage_path or Path(os.getenv("STORAGE_PATH", str(ROOT / "backend/data/uploads"))))
+    auth = AuthService(db)
 
     @asynccontextmanager
     async def lifespan(app):
+        auth.configure()
         if os.getenv("AUTO_MIGRATE", "true").lower() == "true":
             db.initialize()
         else:
@@ -56,16 +59,37 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         yield
 
     app = FastAPI(title="SocraVăn API", version="0.1.0", lifespan=lifespan,
-                  description="Không gian tự học Socratic × Bloom với đề do người học cung cấp. Gia sư dùng kịch bản, chưa kết nối LLM. Chưa có xác thực người dùng.")
+                  description="Tự học Socratic × Bloom. Tài khoản và dữ liệu riêng tư; xác thực JWT qua HttpOnly Cookie. Gia sư hiện dùng kịch bản.")
     app.state.db = db
     app.state.queue = queue
+    app.state.auth = auth
+    origins = [value.strip().rstrip("/") for value in os.getenv(
+        "AUTH_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8000,http://127.0.0.1:8000"
+    ).split(",") if value.strip()]
     app.add_middleware(CORSMiddleware, allow_origins=os.getenv(
         "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-    ).split(","), allow_methods=["GET", "POST", "PUT"], allow_headers=["Content-Type"])
+    ).split(","), allow_credentials=True, allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["Content-Type", "X-CSRF-Token"])
+
+    @app.middleware("http")
+    async def protect_browser_requests(request: Request, call_next):
+        if request.url.path.startswith("/api/") and request.method in UNSAFE_METHODS:
+            origin = request.headers.get("origin")
+            if (origin is not None and origin.rstrip("/") not in origins) or (
+                    origin is None and request.headers.get("sec-fetch-site") == "cross-site"):
+                return JSONResponse({"detail": "Nguồn yêu cầu không được phép."}, status_code=403)
+        response = await call_next(request)
+        if request.url.path.startswith("/api/auth/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
+    app.include_router(auth_router(auth))
 
     @app.get("/api/health", tags=["System"])
     def health():
-        return {"status": "ok", "tutor_mode": "template", "auth_mode": "local_demo"}
+        return {"status": "ok", "tutor_mode": "template", "auth_mode": "jwt_cookie"}
 
     @app.get("/api/ready", tags=["System"])
     def ready():
@@ -79,10 +103,10 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 "background_jobs": background_jobs}
 
     @app.get("/api/assignments", tags=["Assignments"])
-    def assignments():
+    def assignments(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            items = [a for a in db.all(conn, "assignments") if a.get("source") != "legacy_seed"]
-            sessions = saved_sessions(conn)
+            items = [a for a in db.all(conn, "assignments", owner_id=user.id) if a.get("source") != "legacy_seed"]
+            sessions = saved_sessions(conn, user.id)
             for a in items:
                 session = next((s for s in sessions if s["assignment_id"] == a["id"]), None)
                 a["status"] = "Đã hoàn thành" if session and session["submitted"] else "Đang học" if session else "Chưa bắt đầu"
@@ -90,23 +114,23 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             return items
 
     @app.post("/api/assignments", status_code=201, tags=["Assignments"])
-    def create_assignment(body: AssignmentInput):
+    def create_assignment(body: AssignmentInput, user: Principal = Depends(auth.current_user)):
         if body.document_id:
-            document = queue.document(body.document_id)
+            document = queue.document(body.document_id, owner_id=user.id)
             if document is None:
                 raise HTTPException(404, "Không tìm thấy tài liệu")
             if document["status"] != "needs_review":
                 raise HTTPException(409, "Hãy chờ tệp được trích xuất trước khi xác nhận đề")
         item = {**body.model_dump(), "id": str(uuid4()), "source": "student", "status": "Chưa bắt đầu", "progress": 0}
         with db.connect(write=True) as conn:
-            db.put(conn, "assignments", item["id"], item)
+            db.put(conn, "assignments", item["id"], item, owner_id=user.id)
         return item
 
     @app.post("/api/uploads/extract", tags=["Assignments"])
-    def extract(file: UploadFile = File(...)):
+    def extract(file: UploadFile = File(...), user: Principal = Depends(auth.current_user)):
         filename, data = read_upload(file)
         if background_jobs:
-            return JSONResponse(queue.submit(filename, data), status_code=202)
+            return JSONResponse(queue.submit(filename, data, owner_id=user.id), status_code=202)
         try:
             text = extract_text(filename, data)
         except ExtractionError as exc:
@@ -123,23 +147,23 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         return filename, data
 
     @app.post("/api/documents", status_code=202, tags=["Documents"])
-    def upload_document(file: UploadFile = File(...)):
+    def upload_document(file: UploadFile = File(...), user: Principal = Depends(auth.current_user)):
         filename, data = read_upload(file)
-        return queue.submit(filename, data)
+        return queue.submit(filename, data, owner_id=user.id)
 
     @app.get("/api/documents/{document_id}", tags=["Documents"])
-    def document(document_id: str):
-        result = queue.document(document_id)
+    def document(document_id: str, user: Principal = Depends(auth.current_user)):
+        result = queue.document(document_id, owner_id=user.id)
         if result is None:
             raise HTTPException(404, "Không tìm thấy tài liệu")
         return result
 
     @app.post("/api/sessions", tags=["Sessions"])
-    def start_session(body: SessionInput):
+    def start_session(body: SessionInput, user: Principal = Depends(auth.current_user)):
         with db.connect(write=True) as conn:
-            assignment = require(conn, "assignments", body.assignment_id)
+            assignment = require(conn, "assignments", body.assignment_id, user.id)
             # Repeated starts (including a remount or double click) resume the saved session.
-            existing = next((s for s in saved_sessions(conn) if s["assignment_id"] == body.assignment_id), None)
+            existing = next((s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id), None)
             if existing:
                 return public_session(existing)
             if assignment.get("source") == "legacy_seed":
@@ -151,22 +175,22 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 "essay": "", "turns": [tutor_turn(0, steps)], "version": 0, "requests": {},
                 "created_at": now(), "updated_at": now(), "tutor_mode": "template",
             }
-            db.put(conn, "sessions", session["id"], session)
+            db.put(conn, "sessions", session["id"], session, owner_id=user.id)
             return public_session(session)
 
     @app.get("/api/sessions", tags=["Sessions"])
-    def sessions():
+    def sessions(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            return [public_session(s) for s in saved_sessions(conn)]
+            return [public_session(s) for s in saved_sessions(conn, user.id)]
 
     @app.get("/api/sessions/{session_id}", tags=["Sessions"])
-    def get_session(session_id: str):
+    def get_session(session_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            return public_session(require(conn, "sessions", session_id))
+            return public_session(require(conn, "sessions", session_id, user.id))
 
-    def mutate(session_id, body, action):
+    def mutate(session_id, body, action, owner_id):
         with db.connect(write=True) as conn:
-            session = require(conn, "sessions", session_id)
+            session = require(conn, "sessions", session_id, owner_id)
             fingerprint = hashlib.sha256(json.dumps({"action": action, **body.model_dump()}, sort_keys=True).encode()).hexdigest()
             previous = session["requests"].get(body.client_message_id)
             if previous:
@@ -201,25 +225,25 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             session["version"] += 1
             session["updated_at"] = now()
             session["requests"][body.client_message_id] = fingerprint
-            db.put(conn, "sessions", session_id, session)
+            db.put(conn, "sessions", session_id, session, owner_id=owner_id)
             return public_session(session)
 
     @app.post("/api/sessions/{session_id}/messages", tags=["Sessions"])
-    def message(session_id: str, body: MessageInput):
-        return mutate(session_id, body, "message")
+    def message(session_id: str, body: MessageInput, user: Principal = Depends(auth.current_user)):
+        return mutate(session_id, body, "message", user.id)
 
     @app.post("/api/sessions/{session_id}/hints", tags=["Sessions"])
-    def hint(session_id: str, body: ActionInput):
-        return mutate(session_id, body, "hint")
+    def hint(session_id: str, body: ActionInput, user: Principal = Depends(auth.current_user)):
+        return mutate(session_id, body, "hint", user.id)
 
     @app.post("/api/sessions/{session_id}/submit", tags=["Sessions"])
-    def submit(session_id: str, body: SubmissionInput):
-        return mutate(session_id, body, "submit")
+    def submit(session_id: str, body: SubmissionInput, user: Principal = Depends(auth.current_user)):
+        return mutate(session_id, body, "submit", user.id)
 
     @app.get("/api/dashboard", tags=["Analytics"])
-    def dashboard():
+    def dashboard(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            saved = saved_sessions(conn)
+            saved = saved_sessions(conn, user.id)
             answers = [t for s in saved for t in s["turns"] if t["kind"] == "student"]
             hints = sum(t["kind"] == "hint" for s in saved for t in s["turns"])
             return {"sessions": len(saved), "answers": len(answers), "hints": hints,
@@ -228,9 +252,9 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                     "latest_session": public_session(next((s for s in saved if not s["submitted"]), saved[0])) if saved else None}
 
     @app.get("/api/progress", tags=["Analytics"])
-    def progress():
+    def progress(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            saved = saved_sessions(conn)
+            saved = saved_sessions(conn, user.id)
             return {
                 "bloom_profile": [{"skill": name, "value": sum(t["kind"] == "student" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)],
                 "sessions": [public_session(s) for s in saved],

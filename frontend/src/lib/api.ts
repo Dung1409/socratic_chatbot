@@ -50,6 +50,15 @@ export type Progress = {
   sessions: Session[];
 };
 
+export type AuthUser = { id: string; email: string; display_name: string };
+export type AuthSession = { user: AuthUser; csrf_token: string };
+let csrfToken: string | null = null;
+let refreshPromise: Promise<AuthSession> | null = null;
+
+export function clearAuthState() {
+  csrfToken = null;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -59,14 +68,18 @@ export class ApiError extends Error {
   }
 }
 
-export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function send(path: string, options?: RequestInit): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`${import.meta.env["VITE_API_URL"] || ""}/api${path}`, {
       ...options,
+      credentials: "include",
       headers: {
         ...(options?.body && !(options.body instanceof FormData)
           ? { "Content-Type": "application/json" }
+          : {}),
+        ...(csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(options?.method ?? "GET")
+          ? { "X-CSRF-Token": csrfToken }
           : {}),
         ...options?.headers,
       },
@@ -74,6 +87,10 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   } catch {
     throw new ApiError("Không kết nối được backend. Kiểm tra FastAPI đang chạy ở cổng 8000.", 0);
   }
+  return response;
+}
+
+async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const data = await response.json().catch(() => null);
     const detail = data?.detail;
@@ -88,6 +105,92 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   }
   return response.json() as Promise<T>;
 }
+
+async function raw<T>(path: string, options?: RequestInit): Promise<T> {
+  return parse<T>(await send(path, options));
+}
+
+function remember(session: AuthSession) {
+  csrfToken = session.csrf_token;
+  return session;
+}
+
+async function refreshSession(): Promise<AuthSession> {
+  if (!refreshPromise) {
+    const renew = async () => {
+      // Recheck after obtaining the cross-tab lock: another tab may have refreshed.
+      try {
+        return remember(await raw<AuthSession>("/auth/me"));
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      }
+      const csrf = await raw<{ csrf_token: string }>("/auth/csrf");
+      csrfToken = csrf.csrf_token;
+      return remember(await raw<AuthSession>("/auth/refresh", { method: "POST" }));
+    };
+    refreshPromise = (async (): Promise<AuthSession> => {
+      if (typeof navigator !== "undefined" && navigator.locks)
+        return await navigator.locks.request("socratic-auth-refresh", renew);
+      return await renew();
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let response = await send(path, options);
+  if (response.status === 401) {
+    try {
+      await refreshSession();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        clearAuthState();
+        window.dispatchEvent(new Event("socratic:logged-out"));
+      }
+      throw error;
+    }
+    response = await send(path, options);
+    if (response.status === 401) {
+      clearAuthState();
+      window.dispatchEvent(new Event("socratic:logged-out"));
+    }
+  }
+  return parse<T>(response);
+}
+
+export const authApi = {
+  session: async () => {
+    try {
+      return await refreshSession();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        clearAuthState();
+        return null;
+      }
+      throw error;
+    }
+  },
+  login: async (email: string, password: string) =>
+    remember(
+      await raw<AuthSession>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      }),
+    ),
+  register: async (display_name: string, email: string, password: string) =>
+    remember(
+      await raw<AuthSession>("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ display_name, email, password }),
+      }),
+    ),
+  logout: async () => {
+    await raw("/auth/logout", { method: "POST" });
+    clearAuthState();
+  },
+};
 const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
 

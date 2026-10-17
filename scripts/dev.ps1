@@ -2,6 +2,18 @@ $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $workspace '.venv\Scripts\python.exe'
 $vite = Join-Path $workspace 'frontend\node_modules\vite\bin\vite.js'
+if (!$env:JWT_SECRET) {
+    $environmentFile = Join-Path $workspace '.env'
+    if (Test-Path -LiteralPath $environmentFile) {
+        foreach ($line in Get-Content -LiteralPath $environmentFile) {
+            if ($line -match '^JWT_SECRET=(.+)$') {
+                $env:JWT_SECRET = $Matches[1].Trim().Trim('"').Trim("'")
+                break
+            }
+        }
+    }
+    if (!$env:JWT_SECRET) { throw 'Set JWT_SECRET in the process environment or the root .env file. See README.md.' }
+}
 if (!(Test-Path -LiteralPath $python) -or !(Test-Path -LiteralPath $vite)) {
     throw 'Install dependencies first. See README.md.'
 }

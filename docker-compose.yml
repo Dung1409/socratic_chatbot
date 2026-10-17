@@ -11,18 +11,11 @@ x-backend: &backend
     AUTO_MIGRATE: "false"
     BACKGROUND_JOBS: "true"
     STORAGE_PATH: /app/storage
-    # Tesseract remains the safe default; VietOCR can be enabled explicitly
-    # after comparing it on the user's document type.
-    OCR_PROVIDER: ${OCR_PROVIDER:-tesseract}
-    VIETOCR_MODEL: ${VIETOCR_MODEL:-vgg_transformer}
-    VIETOCR_DEVICE: ${VIETOCR_DEVICE:-cpu}
-    VIETOCR_FORCE: ${VIETOCR_FORCE:-false}
     JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file before starting the stack}
     AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
     AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-http://127.0.0.1:${FE_PORT:-8080},http://localhost:${FE_PORT:-8080},http://127.0.0.1:${BE_PORT:-8000},http://localhost:${BE_PORT:-8000},http://127.0.0.1:5173,http://localhost:5173}
   volumes:
     - socratic_files:/app/storage
-    - ocr_model_cache:/home/app/.cache
   init: true
   stop_grace_period: 30s
 
@@ -97,4 +90,3 @@ services:
 volumes:
   postgres_data:
   socratic_files:
-  ocr_model_cache:

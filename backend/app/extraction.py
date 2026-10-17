@@ -21,36 +21,12 @@ MAX_IMAGE_PIXELS = 20_000_000
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 WORD_SUFFIXES = {".doc", ".docx"}
 TEXT_DOCUMENT_SUFFIXES = {".txt", ".md", ".csv", ".rtf", ".html", ".htm"}
-_VIETOCR_PREDICTOR = None
-_VIETOCR_INIT_ERROR = None
 
 
 class ExtractionError(ValueError):
     def __init__(self, message: str, status_code: int = 422):
         super().__init__(message)
         self.status_code = status_code
-
-
-def _vietocr_predict(crop):
-    """Recognize one already-cropped line with VietOCR when explicitly enabled."""
-    global _VIETOCR_PREDICTOR, _VIETOCR_INIT_ERROR
-    if _VIETOCR_INIT_ERROR is not None:
-        return ""
-    if _VIETOCR_PREDICTOR is None:
-        try:
-            from vietocr.tool.config import Cfg
-            from vietocr.tool.predictor import Predictor
-
-            config = Cfg.load_config_from_name(os.getenv("VIETOCR_MODEL", "vgg_transformer"))
-            config["device"] = os.getenv("VIETOCR_DEVICE", "cpu")
-            _VIETOCR_PREDICTOR = Predictor(config)
-        except (ImportError, OSError, RuntimeError, ValueError) as exc:
-            # A worker may run with the lightweight Tesseract image. Cache the
-            # failed initialization so every line does not retry imports/model
-            # loading and turn a multi-page upload into a timeout.
-            _VIETOCR_INIT_ERROR = exc
-            return ""
-    return (_VIETOCR_PREDICTOR.predict(crop) or "").strip()
 
 
 def validate_upload(filename: str, data: bytes):
@@ -147,7 +123,6 @@ def _ocr_image(image) -> tuple[str, float | None]:
     current_key = None
     line_words = []
     line_indexes = []
-    line_scores = []
     scores = []
 
     def plain(value: str) -> str:
@@ -160,21 +135,6 @@ def _ocr_image(image) -> tuple[str, float | None]:
     def flush():
         if line_words:
             value = " ".join(line_words)
-            line_confidence = sum(line_scores) / len(line_scores) if line_scores else 0
-            use_vietocr = os.getenv("VIETOCR_FORCE", "false").lower() == "true" or line_confidence < 88
-            if os.getenv("OCR_PROVIDER", "tesseract").lower() == "vietocr" and use_vietocr:
-                left = min(words["left"][i] for i in line_indexes)
-                top = min(words["top"][i] for i in line_indexes)
-                right = max(words["left"][i] + words["width"][i] for i in line_indexes)
-                bottom = max(words["top"][i] + words["height"][i] for i in line_indexes)
-                crop = prepared.crop((max(0, left - 30), max(0, top - 30),
-                                      min(prepared.width, right + 30), min(prepared.height, bottom + 30)))
-                try:
-                    candidate = _vietocr_predict(crop)
-                    if candidate:
-                        value = candidate
-                except (ImportError, OSError, RuntimeError, ValueError):
-                    pass
             # Short all-caps headings are especially prone to missed Vietnamese
             # accents. Retry only their own crop, never replace unrelated lines.
             if (value.isupper() and 2 <= len(line_words) <= 12 and len(value) <= 80
@@ -196,7 +156,6 @@ def _ocr_image(image) -> tuple[str, float | None]:
             lines.append(value)
             line_words.clear()
             line_indexes.clear()
-            line_scores.clear()
 
     for index, value in enumerate(words["text"]):
         value = value.strip()
@@ -214,7 +173,6 @@ def _ocr_image(image) -> tuple[str, float | None]:
         current_key = key
         line_words.append(value)
         line_indexes.append(index)
-        line_scores.append(confidence)
         scores.append(confidence)
     flush()
     return "\n".join(lines).strip(), round(sum(scores) / len(scores), 1) if scores else None

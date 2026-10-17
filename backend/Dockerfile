@@ -18,6 +18,9 @@ ADD --checksum=sha256:b6b49293d95d0b6dbd8780174627e82c75be957b6f4ed9862155540d6b
     /usr/share/tesseract-ocr/5/tessdata/vie.traineddata
 RUN chmod 644 /usr/share/tesseract-ocr/5/tessdata/vie.traineddata
 COPY requirements.txt ./backend/requirements.txt
+# VietOCR uses PyTorch for inference. Install the CPU wheel explicitly so the
+# image does not pull CUDA libraries into the OCR worker.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.7.1
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 RUN groupadd --gid 10001 app \

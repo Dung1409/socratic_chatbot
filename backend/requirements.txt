@@ -6,8 +6,10 @@ python-multipart==0.0.22
 pypdf==6.8.0
 python-docx==1.2.0
 pypdfium2==5.14.0
-Pillow==13.0.0
+# VietOCR 0.3.x pins Pillow 10.2.0.
+Pillow==10.2.0
 pytesseract==0.3.13
+vietocr==0.3.13
 psycopg[binary]==3.3.6
 PyJWT==2.15.1
 pwdlib[argon2]==0.3.1

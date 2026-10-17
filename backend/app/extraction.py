@@ -79,7 +79,11 @@ def _ocr_image(image) -> tuple[str, float | None]:
 
     # Normalize common phone scans before OCR. Upscaling and local contrast
     # improve Vietnamese diacritics without changing the stored source image.
-    prepared = ImageEnhance.Contrast(ImageOps.grayscale(image)).enhance(1.35)
+    prepared = ImageOps.grayscale(image)
+    if prepared.width < 2200:
+        scale = min(2.0, 2200 / max(prepared.width, 1))
+        prepared = prepared.resize((round(prepared.width * scale), round(prepared.height * scale)))
+    prepared = ImageEnhance.Contrast(prepared).enhance(1.35)
     prepared = prepared.filter(ImageFilter.SHARPEN)
 
     try:
@@ -139,12 +143,12 @@ def _ocr_image(image) -> tuple[str, float | None]:
                 top = min(words["top"][i] for i in line_indexes)
                 right = max(words["left"][i] + words["width"][i] for i in line_indexes)
                 bottom = max(words["top"][i] + words["height"][i] for i in line_indexes)
-                crop = image.crop((max(0, left - 15), max(0, top - 15),
-                                   min(image.width, right + 15), min(image.height, bottom + 15)))
-                prepared = ImageEnhance.Contrast(ImageOps.grayscale(crop)).enhance(1.6)
+                crop = prepared.crop((max(0, left - 30), max(0, top - 30),
+                                      min(prepared.width, right + 30), min(prepared.height, bottom + 30)))
+                prepared_crop = ImageEnhance.Contrast(ImageOps.grayscale(crop)).enhance(1.6)
                 try:
                     candidate = " ".join(pytesseract.image_to_string(
-                        prepared, lang="vie", config="--psm 6", timeout=10).split())
+                        prepared_crop, lang="vie", config="--psm 6", timeout=10).split())
                     if plain(candidate) == plain(value) and accent_count(candidate) > accent_count(value):
                         value = candidate
                 except (pytesseract.TesseractError, RuntimeError):

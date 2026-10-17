@@ -7,13 +7,12 @@ export type Assignment = {
   source: string;
   due?: string;
   author?: string;
-  grade?: string;
+  grade?: 10 | 11 | 12 | null;
   excerpt?: string;
   status: string;
   progress: number;
   task_type?: "reading" | "social";
   source_text?: string;
-  grade?: 10 | 11 | 12 | null;
 };
 export type Step = { level: number; q: string; hints: string[] };
 export type Turn = (

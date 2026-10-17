@@ -32,6 +32,7 @@ function Page() {
   const [text, setText] = useState("");
   const [structure, setStructure] = useState<DocumentStructure | null>(null);
   const [selectedId, setSelectedId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
   const [sourcePages, setSourcePages] = useState<SourcePage[] | null>(null);
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
@@ -54,6 +55,7 @@ function Page() {
     const firstPart = parsed.parts.find((part) => part.questions.length);
     const firstQuestion = firstPart?.questions[0];
     setSelectedId(firstQuestion?.id ?? "");
+    setSelectedIds([]);
     setPrompt(firstQuestion?.context ?? "");
   };
   const upload = async (selected?: File) => {
@@ -73,6 +75,7 @@ function Page() {
       setSourceWarnings(result.warnings ?? []);
       setContentBlocks(result.blocks ?? []);
       setSelectedBlockId("");
+      setSelectedIds([]);
       setDocumentType(result.document_type ?? "reference_document");
       setSubject(result.subject ?? "chưa xác định");
       applyStructure(result.structure ?? await api.structure(result.text, result.pages));
@@ -105,6 +108,7 @@ function Page() {
       setDocumentType("reference_document");
       setSubject("chưa xác định");
       setSelectedId("");
+      setSelectedIds([]);
       setPrompt("");
       setTitle("Đề từ ảnh của em");
     } else if (selected.length === 1 && !IMAGE_TYPES.test(selected[0]!.name)) {
@@ -170,22 +174,39 @@ function Page() {
     setSelectedId(question.id);
     setPrompt(question.context);
   };
+  const toggleQuestion = (questionId: string) => {
+    setSelectedIds((current) => current.includes(questionId)
+      ? current.filter((id) => id !== questionId)
+      : [...current, questionId]);
+  };
   const selectIdea = (idea: ParsedQuestion["ideas"][number]) => {
     setSelectedBlockId("");
     setSelectedId(idea.id);
     setPrompt(idea.context);
   };
   const confirm = async () => {
-    if (busy || !structure || !selectedId || title.trim().length < 5 ||
-        prompt.trim().length < 15) return;
+    if (busy || !structure || selectedIds.length === 0 || title.trim().length < 5) return;
     setBusy(true);
     try {
-      const result = await api.createAssignment({
+      const allQuestions = structure.parts.flatMap((part) => part.questions.map((question) => ({ part, question })));
+      const selectedItems = selectedIds.map((id) => allQuestions.find(({ question }) => question.id === id))
+        .filter((item): item is (typeof allQuestions)[number] => Boolean(item))
+        .map(({ part, question }) => ({
+          item_type: part.title.toUpperCase().includes("ĐỌC") ? "reading" as const
+            : part.title.toUpperCase().includes("XÃ HỘI") ? "social" as const : "literary" as const,
+          label: `${part.title} · ${question.label}`,
+          prompt: question.task || question.text,
+          context: question.context,
+          source_pages: question.source_pages,
+          metadata: { part_id: part.id, question_id: question.id, points: question.points },
+        }));
+      const result = await api.createMultiAssignment({
         title: title.trim(),
-        prompt: prompt.trim(),
-        target: 4,
+        prompt: selectedItems[0]?.prompt ?? prompt.trim(),
+        ...(selectedItems.length > 1 ? { task_type: "mixed" as const } : selectedItems[0]?.item_type ? { task_type: selectedItems[0].item_type } : {}),
         source_text: text.trim(),
         ...(documentId ? { document_id: documentId } : {}),
+        items: selectedItems,
       });
       await client.invalidateQueries({ queryKey: ["assignments"] });
       await navigate({ to: "/phien-hoc", search: { assignment: result.id } });
@@ -332,6 +353,7 @@ function Page() {
                     setContentBlocks([]);
                     setSelectedBlockId("");
                     setSelectedId("");
+                    setSelectedIds([]);
                     setPrompt("");
                   }}
                   placeholder="Nhập đề trực tiếp hoặc kiểm tra văn bản từ tệp…"
@@ -356,6 +378,13 @@ function Page() {
                     <p className="text-sm text-muted-foreground">Đã tách {structure.parts.length} phần · {structure.parts.reduce((total, part) => total + part.questions.length, 0)} câu</p>
                   </div>
                   <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">Bước 2/3 · Kiểm tra đề</span>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                  <p className="text-sm font-medium">Đã chọn <span className="text-primary">{selectedIds.length}</span> câu</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={() => setSelectedIds(structure.parts.flatMap((part) => part.questions.map((question) => question.id)))}>Chọn tất cả</Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0}>Bỏ chọn</Button>
+                  </div>
                 </div>
                 {[...sourceWarnings, ...structure.warnings].map((warning, index) => (
                   <p key={`${index}-${warning}`} className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">{warning}</p>
@@ -391,16 +420,19 @@ function Page() {
                           {part.questions.map((question) => {
                             const active = selectedQuestion?.id === question.id;
                             return (
-                              <button key={question.id} type="button" aria-current={active ? "true" : undefined}
-                                onClick={() => selectQuestion(question)}
-                                className={`w-full rounded-lg border px-3 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-primary ${active ? "border-primary bg-primary/10" : "border-transparent hover:border-border hover:bg-muted/50"}`}>
+                              <div key={question.id} className={`flex items-start gap-2 rounded-lg border px-3 py-3 transition-colors ${active ? "border-primary bg-primary/10" : "border-transparent hover:border-border hover:bg-muted/50"}`}>
+                                <input type="checkbox" aria-label={`Chọn ${question.label}`} checked={selectedIds.includes(question.id)} onChange={() => toggleQuestion(question.id)} className="mt-1 h-4 w-4 shrink-0 accent-primary" />
+                                <button type="button" aria-current={active ? "true" : undefined}
+                                  onClick={() => selectQuestion(question)}
+                                  className="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-primary">
                                 <span className="flex items-center justify-between gap-2 text-sm font-semibold">
                                   <span>{question.label}</span>
                                   {question.points && <span className="text-xs font-medium text-muted-foreground">{question.points}</span>}
                                 </span>
                                 <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted-foreground">{formatProse(question.task || question.text)}</span>
                                 {question.materials && <span className="mt-2 inline-block rounded bg-background/80 px-2 py-0.5 text-[11px] font-medium text-primary">Có ngữ liệu riêng</span>}
-                              </button>
+                                </button>
+                              </div>
                             );
                           })}
                         </div>
@@ -493,6 +525,17 @@ function Page() {
                   )}
                 </div>
                 <div className="space-y-3 border-t pt-4">
+                  {selectedIds.length > 0 && (
+                    <div className="rounded-lg border bg-muted/20 p-3" aria-label="Danh sách câu đã chọn">
+                      <p className="text-sm font-semibold">Câu sẽ chuyển sang phiên học</p>
+                      <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+                        {selectedIds.map((id) => {
+                          const item = structure.parts.flatMap((part) => part.questions).find((question) => question.id === id);
+                          return item ? <li key={id}>{item.label}: {formatProse(item.task || item.text)}</li> : null;
+                        })}
+                      </ol>
+                    </div>
+                  )}
                   {structure.excluded.length > 0 && (
                     <details className="rounded-md border p-3 text-xs">
                       <summary className="cursor-pointer font-medium">Nội dung đã loại khỏi phiên học ({structure.excluded.length} dòng)</summary>
@@ -521,8 +564,7 @@ function Page() {
             <Button
               className="w-full"
               type="submit"
-              disabled={busy || !structure || !selectedId || title.trim().length < 5 ||
-                prompt.trim().length < 15}
+              disabled={busy || !structure || selectedIds.length === 0 || title.trim().length < 5}
             >
               {busy ? "Đang xử lý…" : selectedBlockId ? "Xác nhận nội dung này & bắt đầu học" : "Xác nhận câu này & bắt đầu học"}
             </Button>

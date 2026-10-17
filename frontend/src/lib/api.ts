@@ -295,6 +295,21 @@ export const api = {
     grade?: 10 | 11 | 12 | null;
     document_id?: string;
   }) => post<Assignment>("/assignments", body),
+  createMultiAssignment: (body: {
+    title: string;
+    prompt?: string;
+    task_type?: "reading" | "social" | "literary" | "mixed";
+    source_text?: string;
+    document_id?: string;
+    items: Array<{
+      item_type: "reading" | "social" | "literary" | "other";
+      label: string;
+      prompt: string;
+      context?: string;
+      source_pages?: number[];
+      metadata?: Record<string, unknown>;
+    }>;
+  }) => post<Assignment>("/learning/assignments", body),
   extract: async (file: File): Promise<ExtractedDocument> => {
     const data = new FormData();
     data.append("file", file);

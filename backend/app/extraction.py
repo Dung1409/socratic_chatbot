@@ -86,6 +86,30 @@ def _ocr_image(image) -> tuple[str, float | None]:
     except (pytesseract.TesseractError, RuntimeError) as exc:
         raise ExtractionError("OCR ảnh thất bại hoặc quá thời gian; hãy thử ảnh rõ hơn.") from exc
 
+    def mean_confidence(candidate):
+        values = []
+        for value in candidate.get("conf", []):
+            try:
+                score = float(value)
+            except (TypeError, ValueError):
+                continue
+            if score >= 0:
+                values.append(score)
+        return sum(values) / len(values) if values else 0
+
+    # Retry uncertain pages with a different layout model and keep the pass
+    # with stronger word-level confidence. This avoids proofreading every page.
+    first_score = mean_confidence(words)
+    if first_score < 88:
+        try:
+            alternate = pytesseract.image_to_data(
+                prepared, lang="vie", config="--psm 6", output_type=Output.DICT, timeout=35,
+            )
+            if mean_confidence(alternate) > first_score + 2:
+                words = alternate
+        except (pytesseract.TesseractError, RuntimeError):
+            pass
+
     lines = []
     current_key = None
     line_words = []

@@ -14,6 +14,8 @@ x-backend: &backend
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     OPENAI_TUTOR_MODEL: ${OPENAI_TUTOR_MODEL:-gpt-6.1-sol}
     OPENAI_ASSESSMENT_MODEL: ${OPENAI_ASSESSMENT_MODEL:-gpt-6.1-sol}
+    DOCUMENT_AI_PROVIDER: ${DOCUMENT_AI_PROVIDER:-gemini}
+    DOCUMENT_AI_MODEL: ${DOCUMENT_AI_MODEL:-gpt-5-mini}
     STORAGE_PATH: /app/storage
     JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file before starting the stack}
     AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}

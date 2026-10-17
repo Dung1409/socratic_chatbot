@@ -459,9 +459,9 @@ def _content_blocks(pages: list[dict]) -> list[dict]:
 
 
 def _finalize_pages(filename: str, pages: list[dict], source_images: dict[int, bytes] | None) -> dict:
-    from .gemini import improve_pages
+    from .document_ai import improve_pages
 
-    pages, gemini_warnings = improve_pages(pages, source_images)
+    pages, ai_warnings = improve_pages(pages, source_images)
     if source_images:
         for page in pages:
             if page["text"] or page["number"] not in source_images:
@@ -469,7 +469,7 @@ def _finalize_pages(filename: str, pages: list[dict], source_images: dict[int, b
             try:
                 page["text"], page["confidence"] = _ocr_image(_image(source_images[page["number"]]))
                 page["method"] = "ocr"
-                gemini_warnings.append(f"{page['label']}: đã dùng OCR cục bộ vì Gemini không đọc được trang này.")
+                ai_warnings.append(f"{page['label']}: đã dùng OCR cục bộ vì AI không đọc được trang này.")
             except ExtractionError:
                 pass
     text = "\n\n".join(page["text"] for page in pages if page["text"]).strip()
@@ -477,7 +477,7 @@ def _finalize_pages(filename: str, pages: list[dict], source_images: dict[int, b
         raise ExtractionError("Không nhận diện đủ chữ; hãy dùng ảnh rõ hơn hoặc nhập nội dung trực tiếp.")
     if len(text) > MAX_TEXT_CHARS:
         raise ExtractionError("Nội dung vượt quá 150.000 ký tự; hãy chia tài liệu thành nhiều bộ đề.")
-    warnings = [*gemini_warnings, *[f"{page['label']} không đọc được chữ; cần kiểm tra bản gốc."
+    warnings = [*ai_warnings, *[f"{page['label']} không đọc được chữ; cần kiểm tra bản gốc."
                                  for page in pages if not page["text"]]]
     if any(page["method"] == "ocr" for page in pages):
         warnings.append("OCR có thể sai dù điểm tin cậy cao; hãy đối chiếu các số liệu và chữ quan trọng với bản gốc.")
@@ -492,9 +492,9 @@ def extract_image_batch(files: list[tuple[str, bytes]]) -> dict:
     """Read an ordered set of uploaded images as one document."""
     if not files or len(files) > 12:
         raise ExtractionError("Cần từ 1 đến 12 ảnh trong một tài liệu.")
-    from .gemini import enabled as gemini_enabled
+    from .document_ai import enabled as document_ai_enabled
 
-    source_images = {} if gemini_enabled() else None
+    source_images = {} if document_ai_enabled() else None
     pages = []
     for number, (filename, data) in enumerate(files, start=1):
         validate_upload(filename, data)
@@ -515,8 +515,8 @@ def extract_document(filename: str, data: bytes) -> dict:
     """Return text and ordered units; never silently discard an unreadable page."""
     validate_upload(filename, data)
     suffix = Path(filename).suffix.lower()
-    from .gemini import enabled as gemini_enabled
-    source_images = {} if gemini_enabled() else None
+    from .document_ai import enabled as document_ai_enabled
+    source_images = {} if document_ai_enabled() else None
     try:
         if suffix in TEXT_DOCUMENT_SUFFIXES:
             text = _rich_text(data, suffix)

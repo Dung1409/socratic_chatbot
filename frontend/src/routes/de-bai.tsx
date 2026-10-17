@@ -515,8 +515,15 @@ function Page() {
                   <details className="rounded-md border p-3">
                     <summary className="cursor-pointer text-sm font-medium">Kiểm tra hoặc sửa nội dung gửi gia sư · {prompt.length.toLocaleString("vi-VN")} ký tự</summary>
                     <label className="mt-3 block text-sm font-medium">
-                      Nội dung của câu/ý đang chọn để gia sư dùng
-                      <Textarea className="mt-1.5 min-h-36" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+                      {selectedBlockId ? "Nội dung block đang chọn để gia sư dùng" : "Nội dung của câu/ý đang chọn để gia sư dùng"}
+                      <Textarea className="mt-1.5 min-h-36" value={prompt} onChange={(e) => {
+                        const value = e.target.value;
+                        setPrompt(value);
+                        if (selectedBlockId) {
+                          setContentBlocks((current) => current.map((block) =>
+                            block.id === selectedBlockId ? { ...block, text: value } : block));
+                        }
+                      }} />
                     </label>
                   </details>
                 </div>

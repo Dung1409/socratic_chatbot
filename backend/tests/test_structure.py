@@ -63,6 +63,19 @@ def test_multiline_question_stem_is_not_lost():
     assert "Và nêu cảm nhận" in question["context"]
 
 
+def test_ocr_page_label_with_leading_punctuation_is_excluded():
+    result = structure_text("II. VIẾT\nCâu 2. Phân tích bài thơ sau:\nNhững chiếc lá\n: Trang 2/2")
+    question = result["parts"][0]["questions"][0]
+    assert "Trang 2/2" not in question["materials"]
+    assert any(item["reason"] == "page_number" for item in result["excluded"])
+
+
+def test_ocr_section_prefix_keeps_reading_and_writing_parts_separate():
+    result = structure_text("1L ĐỌC HIÈU (4,0 điểm)\nCâu 1. Đọc văn bản.\nII. VIẾT (6,0 điểm)\nCâu 1. Viết đoạn văn.")
+    assert [len(part["questions"]) for part in result["parts"]] == [1, 1]
+    assert result["parts"][0]["title"].startswith("1L ĐỌC")
+
+
 def test_ocr_question_five_marker_inside_previous_question_line():
     text = ("I. ĐỌC HIỂU (4,0 điểm)\n"
             "Câu 4. Nhận xét về mồi liên hệ giữa luận đề và các luận điểm trong văn bản. "

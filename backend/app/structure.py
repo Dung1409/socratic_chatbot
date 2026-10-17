@@ -9,7 +9,7 @@ import unicodedata
 from collections import Counter
 
 SECTION = re.compile(
-    r"^\s*(?:PHAN\s+)?(?:[IVXILl]+|\d{1,2})\s*[.):\-–]?\s+"
+    r"^\s*(?:PHAN\s+)?(?:[IVXILl1]+|\d{1,2})\s*[.):\-–]?\s+"
     r"(?:DOC HIEU|LAM VAN|VIET|TIENG VIET|NGHI LUAN)\b",
     re.IGNORECASE,
 )
@@ -23,7 +23,7 @@ INLINE_QUESTION = re.compile(r"(?<=[.!?])\s+(?=(?:Câu|Bài)\s*(?:\d{1,3}|[Šš]
 OCR_QUESTION_NUMBER = re.compile(r"^(\s*(?:Câu|Bài)\s*)[Šš](?=\s*[.):])")
 IDEA = re.compile(r"^\s*(?:\(([a-h])\)|([a-h])[.)])\s+(.+)$", re.IGNORECASE)
 ANSWER_KEY = re.compile(r"^\s*(?:ĐÁP ÁN|HƯỚNG DẪN CHẤM|GỢI Ý ĐÁP ÁN|THANG ĐIỂM)\b", re.IGNORECASE)
-PAGE_NUMBER = re.compile(r"(?:trang|page)\s*(\d{1,3})(?:\s*(?:/|trên|of)\s*\d{1,3})?\s*$", re.IGNORECASE)
+PAGE_NUMBER = re.compile(r"[:;.,\-–]?\s*(?:trang|page)\s*(\d{1,3})(?:\s*(?:/|trên|of)\s*\d{1,3})?\s*$", re.IGNORECASE)
 NUMBERED_PARAGRAPH = re.compile(r"^\s*\((\d{1,2})\)\s+")
 PARAGRAPH_REFERENCE = re.compile(r"\bDOAN\s*\(?\s*(\d{1,2})\s*\)?")
 FOOTNOTE = re.compile(r"^\s*([1-9¹²³!])(?:[.)])?\s+(.+)$")

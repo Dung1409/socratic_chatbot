@@ -147,12 +147,12 @@ def _ocr_image(image) -> tuple[str, float | None]:
 
     def verified_number(index: int, value: str, confidence: float) -> str:
         """Check uncertain numerals on their own pixels with digit-only OCR."""
-        numeric = re.fullmatch(r"(\d{1,6})([.,):]*)", value)
+        numeric = re.fullmatch(r"(\d{1,6})([.,):%]*)", value)
         after_question_label = bool(line_words and plain(line_words[-1]).rstrip(".") in {"CAU", "BAI"})
         ambiguous_label_number = (after_question_label and bool(re.fullmatch(r"\D{1,3}[.):]", value)))
         if numeric is None and not ambiguous_label_number:
             return value
-        if numeric is not None and confidence >= 95:
+        if numeric is not None and confidence >= 99:
             return value
         left, top = words["left"][index], words["top"][index]
         right = left + words["width"][index]
@@ -171,7 +171,29 @@ def _ocr_image(image) -> tuple[str, float | None]:
             if len(reads[0]) != len(numeric.group(1)):
                 return value
             return reads[0] + numeric.group(2)
-        return reads[0] + value[len(value.rstrip(".,):")):]
+        return reads[0] + value[len(value.rstrip(".,):%")):]
+
+    def verified_word(index: int, value: str, confidence: float) -> str:
+        """Recheck low-confidence Vietnamese words without guessing from context."""
+        if confidence >= 70 or not re.fullmatch(r"[^\W\d_]{2,20}[.!?,;:]?", value, re.UNICODE):
+            return value
+        left, top = words["left"][index], words["top"][index]
+        right = left + words["width"][index]
+        bottom = top + words["height"][index]
+        crop = prepared.crop((max(0, left - 12), max(0, top - 8),
+                              min(prepared.width, right + 12), min(prepared.height, bottom + 8)))
+        try:
+            reads = [pytesseract.image_to_string(
+                crop, lang="vie", config=f"--psm {psm}", timeout=5,
+            ).strip().strip("\"'“”‘’.,!?;:") for psm in (7, 8)]
+        except (pytesseract.TesseractError, RuntimeError):
+            return value
+        original = value.rstrip(".!?,;:")
+        if reads[0] != reads[1] or not re.fullmatch(r"[^\W\d_]{2,20}", reads[0], re.UNICODE):
+            return value
+        if len(reads[0]) < len(original) - 1 or len(reads[0]) > len(original) + 1:
+            return value
+        return reads[0] + value[len(original):]
 
     def flush():
         if line_words:
@@ -212,6 +234,7 @@ def _ocr_image(image) -> tuple[str, float | None]:
         if current_key is not None and key != current_key:
             flush()
         value = verified_number(index, value, confidence)
+        value = verified_word(index, value, confidence)
         current_key = key
         line_words.append(value)
         line_indexes.append(index)

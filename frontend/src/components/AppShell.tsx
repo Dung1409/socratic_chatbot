@@ -6,12 +6,18 @@ import {
   MessagesSquare,
   LineChart,
   Menu,
-  X,
   GraduationCap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/AuthProvider";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
 
 const studentNav = [
@@ -34,7 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     title: string;
     items: readonly { to: string; label: string; icon: typeof BookOpen }[];
   }) => (
-    <div className="mb-6">
+    <div className="mb-6 space-y-2">
       <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </p>
@@ -44,15 +50,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link
             key={i.to}
             to={i.to}
+            aria-current={active ? "page" : undefined}
             onClick={() => setOpen(false)}
             className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+              "flex min-h-12 items-center gap-3 rounded-lg px-3 py-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
               active
-                ? "bg-accent text-accent-foreground font-medium"
+                ? "bg-primary-soft text-primary font-semibold"
                 : "text-foreground/75 hover:bg-muted",
             )}
           >
-            <i.icon className="h-4 w-4" />
+            <i.icon aria-hidden="true" className="size-[18px] shrink-0" strokeWidth={1.75} />
             {i.label}
           </Link>
         );
@@ -60,84 +67,90 @@ export function AppShell({ children }: { children: ReactNode }) {
     </div>
   );
 
+  const sidebar = (
+    <>
+      <div className="h-24 shrink-0 flex items-center gap-2.5 px-5 border-b">
+        <div className="h-8 w-8 rounded-md bg-primary text-primary-foreground grid place-items-center">
+          <GraduationCap className="h-4.5 w-4.5" />
+        </div>
+        <div className="leading-tight">
+          <p className="font-semibold text-sm">
+            Socra<span className="text-primary">Văn</span>
+          </p>
+          <p className="text-[11px] text-muted-foreground">Gia sư AI · Socratic × Bloom</p>
+        </div>
+      </div>
+      <nav aria-label="Điều hướng chính" className="flex-1 overflow-y-auto p-4 pt-6">
+        <NavGroup title="Không gian tự học" items={studentNav} />
+      </nav>
+      <div className="border-t p-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 shrink-0 rounded-full grid place-items-center text-xs font-semibold bg-primary-soft text-primary">
+            {auth.user?.display_name.slice(0, 2).toUpperCase()}
+          </div>
+          <div className="text-sm leading-tight min-w-0">
+            <p className="font-medium truncate">{auth.user?.display_name}</p>
+            <p className="text-xs text-muted-foreground truncate">{auth.user?.email}</p>
+          </div>
+        </div>
+        <Button
+          className="h-10 w-full bg-card shadow-none"
+          size="sm"
+          variant="outline"
+          disabled={signingOut}
+          onClick={() => {
+            setSigningOut(true);
+            void auth
+              .logout()
+              .catch((error: unknown) => {
+                toast.error(
+                  error instanceof Error ? error.message : "Chưa đăng xuất được. Vui lòng thử lại.",
+                );
+              })
+              .finally(() => setSigningOut(false));
+          }}
+        >
+          {signingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+        </Button>
+      </div>
+    </>
+  );
+
   return (
-    <div className="min-h-screen bg-background">
-      <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-40 w-64 border-r bg-sidebar flex flex-col transition-transform lg:translate-x-0",
-          open ? "translate-x-0" : "-translate-x-full",
-        )}
+    <div className="min-h-[100dvh] bg-background">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-card focus:p-3 focus:text-primary"
       >
-        <div className="h-16 flex items-center gap-2.5 px-5 border-b">
-          <div className="h-8 w-8 rounded-md bg-primary text-primary-foreground grid place-items-center">
-            <GraduationCap className="h-4.5 w-4.5" />
-          </div>
-          <div className="leading-tight">
-            <p className="font-semibold text-sm">
-              Socra<span className="text-primary">Văn</span>
-            </p>
-            <p className="text-[11px] text-muted-foreground">Gia sư AI · Socratic × Bloom</p>
-          </div>
-          <button
-            className="ml-auto lg:hidden"
-            onClick={() => setOpen(false)}
-            aria-label="Đóng menu"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <nav className="flex-1 overflow-y-auto p-3 pt-5">
-          <NavGroup title="Không gian tự học" items={studentNav} />
-        </nav>
-        <div className="border-t p-4 space-y-3">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 shrink-0 rounded-full grid place-items-center text-xs font-semibold bg-primary-soft text-primary">
-              {auth.user?.display_name.slice(0, 2).toUpperCase()}
-            </div>
-            <div className="text-sm leading-tight min-w-0">
-              <p className="font-medium truncate">{auth.user?.display_name}</p>
-              <p className="text-xs text-muted-foreground truncate">{auth.user?.email}</p>
-            </div>
-          </div>
-          <Button
-            className="w-full"
-            size="sm"
-            variant="outline"
-            disabled={signingOut}
-            onClick={() => {
-              setSigningOut(true);
-              void auth
-                .logout()
-                .catch((error: unknown) => {
-                  toast.error(
-                    error instanceof Error
-                      ? error.message
-                      : "Chưa đăng xuất được. Vui lòng thử lại.",
-                  );
-                })
-                .finally(() => setSigningOut(false));
-            }}
-          >
-            {signingOut ? "Đang đăng xuất…" : "Đăng xuất"}
-          </Button>
-        </div>
+        Đến nội dung chính
+      </a>
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r bg-sidebar lg:flex">
+        {sidebar}
       </aside>
-      {open && (
-        <div
-          className="fixed inset-0 z-30 bg-foreground/30 lg:hidden"
-          onClick={() => setOpen(false)}
-        />
-      )}
       <div className="lg:pl-64">
         <header className="lg:hidden h-14 border-b bg-card flex items-center px-4 gap-3 sticky top-0 z-20">
-          <button onClick={() => setOpen(true)} aria-label="Mở menu">
-            <Menu className="h-5 w-5" />
-          </button>
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <Button size="icon" variant="ghost" className="size-11" aria-label="Mở menu">
+                <Menu aria-hidden="true" className="size-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="left"
+              className="flex w-72 max-w-[calc(100%-32px)] flex-col gap-0 bg-sidebar p-0 motion-reduce:animate-none motion-reduce:transition-none"
+            >
+              <SheetTitle className="sr-only">Menu SocraVăn</SheetTitle>
+              <SheetDescription className="sr-only">Điều hướng không gian tự học</SheetDescription>
+              {sidebar}
+            </SheetContent>
+          </Sheet>
           <p className="font-semibold text-sm">
             Socra<span className="text-primary">Văn</span>
           </p>
         </header>
-        <main>{children}</main>
+        <main id="main-content" tabIndex={-1}>
+          {children}
+        </main>
       </div>
     </div>
   );

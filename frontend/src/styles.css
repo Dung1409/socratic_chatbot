@@ -82,14 +82,14 @@
 }
 
 :root {
-  --radius: 0.5rem;
+  --radius: 0.625rem;
   --background: oklch(0.984 0.003 247.86);
   --foreground: oklch(0.279 0.041 260.03);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.279 0.041 260.03);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.279 0.041 260.03);
-  --primary: oklch(0.511 0.262 276.97);
+  --primary: oklch(0.51148 0.25901 276.8575); /* #4F3BF5 */
   --primary-foreground: oklch(0.99 0 0);
   --primary-soft: oklch(0.962 0.018 272.3);
   --secondary: oklch(0.511 0.086 186.4);
@@ -105,7 +105,7 @@
   --warning-soft: oklch(0.973 0.048 92);
   --border: oklch(0.929 0.013 255.5);
   --input: oklch(0.929 0.013 255.5);
-  --ring: oklch(0.511 0.262 276.97);
+  --ring: var(--primary);
   --bloom-1: oklch(0.7 0.04 257);
   --bloom-2: oklch(0.65 0.09 230);
   --bloom-3: oklch(0.6 0.1 190);
@@ -119,12 +119,55 @@
   --chart-5: oklch(0.645 0.246 16.4);
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.279 0.041 260.03);
-  --sidebar-primary: oklch(0.511 0.262 276.97);
+  --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: oklch(0.99 0 0);
   --sidebar-accent: oklch(0.962 0.018 272.3);
   --sidebar-accent-foreground: oklch(0.398 0.195 277.4);
   --sidebar-border: oklch(0.929 0.013 255.5);
-  --sidebar-ring: oklch(0.511 0.262 276.97);
+  --sidebar-ring: var(--primary);
+}
+
+/* Assignment workspace: a compact list, with a bounded, scrollable dialog. */
+.assignment-page,
+.assignment-dialog {
+  --radius-md: 0.625rem;
+  --radius-xl: 0.75rem;
+}
+
+.assignment-dialog {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.assignment-select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 8px 12px;
+  font-size: 16px;
+}
+
+@media (min-width: 768px) {
+  .assignment-select {
+    font-size: 14px;
+  }
+}
+
+:where(.assignment-page, .assignment-dialog)
+  :where(button, a, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assignment-page *,
+  .assignment-dialog *,
+  .assignment-dialog {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 @layer base {

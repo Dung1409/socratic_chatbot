@@ -17,6 +17,7 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
     page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
   ).toBeVisible();
   await page.goto("/de-bai");
+  await page.getByRole("button", { name: "Tạo đề bài", exact: true }).click();
   await expect(page.getByLabel("Mục tiêu luyện tập")).toHaveCount(0);
   await page
     .getByRole("textbox", { name: "Tên đề", exact: true })
@@ -24,8 +25,9 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
   await page
     .getByRole("textbox", { name: "Nội dung đề", exact: true })
     .fill("Em hãy bàn luận quan điểm: thành công chủ yếu đến từ tài năng.");
+  await page.getByRole("button", { name: "Tiếp tục", exact: true }).click();
   await page.getByLabel("Khối lớp", { exact: false }).selectOption("11");
-  await page.getByRole("button", { name: "Xác nhận đề & bắt đầu học" }).click();
+  await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
   await expect(
     page.getByText("Em hiểu vấn đề của đề bài như thế nào?", { exact: true }),
   ).toBeVisible();
@@ -82,17 +84,19 @@ test("failed student input survives reload and can be canceled without counting 
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
   await expect(page.getByText("Bạn luyện tư duy", { exact: true })).toBeVisible();
   await page.goto("/de-bai");
+  await page.getByRole("button", { name: "Tạo đề bài", exact: true }).click();
   await page
     .getByRole("textbox", { name: "Tên đề", exact: true })
     .fill("Đọc hiểu văn bản thử nghiệm");
   await page
     .getByRole("textbox", { name: "Nội dung đề", exact: true })
     .fill("Hãy giải thích thông điệp của đoạn trích và liên hệ với trải nghiệm của em.");
+  await page.getByRole("button", { name: "Tiếp tục", exact: true }).click();
   await page.getByLabel("Dạng bài").selectOption("reading");
   await page
     .getByLabel("Ngữ liệu / đoạn trích liên quan")
     .fill("Đoạn trích thử nghiệm do người học cung cấp.");
-  await page.getByRole("button", { name: "Xác nhận đề & bắt đầu học" }).click();
+  await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
   await page
     .getByLabel("Suy nghĩ của em", { exact: true })
     .fill("[fail] Em muốn giữ câu trả lời này sau khi lỗi.");

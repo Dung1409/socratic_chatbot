@@ -1,0 +1,89 @@
+x-backend: &backend
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  environment:
+    PGHOST: postgres
+    PGPORT: "5432"
+    PGDATABASE: ${POSTGRES_DB:-socratic}
+    PGUSER: ${POSTGRES_USER:-socratic}
+    PGPASSWORD: ${POSTGRES_PASSWORD:-socratic_local_only}
+    AUTO_MIGRATE: "false"
+    BACKGROUND_JOBS: "true"
+    STORAGE_PATH: /app/storage
+  volumes:
+    - socratic_files:/app/storage
+  init: true
+  stop_grace_period: 30s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-socratic}
+      POSTGRES_USER: ${POSTGRES_USER:-socratic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-socratic_local_only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    shm_size: 128mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    command: ["python", "-m", "backend.app.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  backend:
+    <<: *backend
+    ports:
+      - "127.0.0.1:${BE_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "backend.app.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "from backend.app.worker import check_health; check_health()"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${FE_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  socratic_files:

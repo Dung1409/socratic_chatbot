@@ -1,8 +1,6 @@
 import hashlib
-import io
 import json
 import os
-import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,9 +8,11 @@ from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .db import Database
+from .extraction import ExtractionError, MAX_FILE_BYTES, extract_text, validate_upload
+from .jobs import JobQueue
 from .schemas import AssignmentInput, RubricInput, SessionInput, ActionInput, MessageInput, SubmissionInput, ReviewInput
 from .tutor import SEED, BLOOM_NAMES, lesson_steps, tutor_turn
 
@@ -38,17 +38,26 @@ def saved_sessions(conn):
     return sorted(Database.all(conn, "sessions"), key=lambda s: s["updated_at"], reverse=True)
 
 
-def create_app(database_path: str | None = None, frontend_dist: Path | None = None):
-    db = Database(database_path or os.getenv("DATABASE_PATH", str(ROOT / "backend/data/socratic.db")))
+def create_app(database_path: str | None = None, frontend_dist: Path | None = None,
+               storage_path: Path | None = None):
+    db = Database(database_path) if database_path else Database.from_env()
+    background_jobs = os.getenv("BACKGROUND_JOBS", "false").lower() == "true"
+    queue = JobQueue(db, storage_path or Path(os.getenv("STORAGE_PATH", str(ROOT / "backend/data/uploads"))))
 
     @asynccontextmanager
     async def lifespan(app):
-        db.initialize()
+        if os.getenv("AUTO_MIGRATE", "true").lower() == "true":
+            db.initialize()
+        else:
+            db.check_ready()
+        if background_jobs:
+            queue.storage_path.mkdir(parents=True, exist_ok=True)
         yield
 
     app = FastAPI(title="SocraVăn API", version="0.1.0", lifespan=lifespan,
                   description="Backend local/demo cho giao diện Socratic × Bloom. Gia sư dùng kịch bản, chưa kết nối LLM. Chưa có xác thực người dùng.")
     app.state.db = db
+    app.state.queue = queue
     app.add_middleware(CORSMiddleware, allow_origins=os.getenv(
         "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
     ).split(","), allow_methods=["GET", "POST", "PUT"], allow_headers=["Content-Type"])
@@ -56,6 +65,17 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     @app.get("/api/health", tags=["System"])
     def health():
         return {"status": "ok", "tutor_mode": "template", "auth_mode": "local_demo"}
+
+    @app.get("/api/ready", tags=["System"])
+    def ready():
+        try:
+            db.check_ready()
+            if background_jobs and not os.access(queue.storage_path, os.W_OK):
+                raise RuntimeError("Storage is not writable")
+        except Exception as exc:
+            raise HTTPException(503, "Database hoặc kho tệp chưa sẵn sàng") from exc
+        return {"status": "ready", "database": "postgresql" if db.postgres else "sqlite",
+                "background_jobs": background_jobs}
 
     @app.get("/api/assignments", tags=["Assignments"])
     def assignments():
@@ -77,36 +97,35 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
 
     @app.post("/api/uploads/extract", tags=["Assignments"])
     def extract(file: UploadFile = File(...)):
-        suffix = Path(file.filename or "").suffix.lower()
-        if suffix not in {".txt", ".pdf", ".docx"}:
-            raise HTTPException(415, "Chỉ hỗ trợ TXT, PDF có chữ và DOCX. Ảnh và PDF scan cần OCR, chưa được hỗ trợ.")
-        data = file.file.read(10 * 1024 * 1024 + 1)
-        if len(data) > 10 * 1024 * 1024:
-            raise HTTPException(413, "Tệp vượt quá 10MB")
+        filename, data = read_upload(file)
+        if background_jobs:
+            return JSONResponse(queue.submit(filename, data), status_code=202)
         try:
-            if suffix == ".txt":
-                text = data.decode("utf-8-sig")
-            elif suffix == ".pdf":
-                from pypdf import PdfReader
-                reader = PdfReader(io.BytesIO(data))
-                if reader.is_encrypted or len(reader.pages) > 100:
-                    raise ValueError("PDF phải không mã hóa và tối đa 100 trang")
-                text = "\n".join(page.extract_text() or "" for page in reader.pages)
-            else:
-                from docx import Document
-                with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                    if len(archive.infolist()) > 1000 or sum(i.file_size for i in archive.infolist()) > 30 * 1024 * 1024:
-                        raise ValueError("DOCX có kích thước giải nén quá lớn")
-                doc = Document(io.BytesIO(data))
-                text = "\n".join([p.text for p in doc.paragraphs] + [cell.text for table in doc.tables for row in table.rows for cell in row.cells])
-            text = text.strip()
-            if len(text) < 15:
-                raise ValueError("Không đủ văn bản để tạo đề. PDF scan cần OCR; hãy nhập nội dung trực tiếp.")
-            if len(text) > 30000:
-                raise ValueError("Nội dung quá dài (tối đa 30.000 ký tự); hãy chia nhỏ đề bài.")
-        except Exception as exc:
-            raise HTTPException(422, str(exc) if isinstance(exc, ValueError) else "Không đọc được tệp. Kiểm tra định dạng và thử lại.") from exc
-        return {"filename": file.filename, "title": Path(file.filename or "Đề bài").stem, "text": text, "needs_confirmation": True}
+            text = extract_text(filename, data)
+        except ExtractionError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return {"filename": filename, "title": Path(filename).stem, "text": text, "needs_confirmation": True}
+
+    def read_upload(file):
+        filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1][:300]
+        data = file.file.read(MAX_FILE_BYTES + 1)
+        try:
+            validate_upload(filename, data)
+        except ExtractionError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return filename, data
+
+    @app.post("/api/documents", status_code=202, tags=["Documents"])
+    def upload_document(file: UploadFile = File(...)):
+        filename, data = read_upload(file)
+        return queue.submit(filename, data)
+
+    @app.get("/api/documents/{document_id}", tags=["Documents"])
+    def document(document_id: str):
+        result = queue.document(document_id)
+        if result is None:
+            raise HTTPException(404, "Không tìm thấy tài liệu")
+        return result
 
     @app.get("/api/rubric", tags=["Rubric"])
     def rubric():

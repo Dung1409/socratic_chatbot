@@ -128,6 +128,16 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
 }
 const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
+
+type ExtractedDocument = { filename: string; title: string; text: string };
+type PendingDocument = { document_id: string; job_id: string; status: string };
+type DocumentStatus = PendingDocument & {
+  filename: string;
+  title: string;
+  text: string | null;
+  error: string | null;
+};
+
 export const api = {
   assignments: () => request<Assignment[]>("/assignments"),
   createAssignment: (body: {
@@ -137,13 +147,25 @@ export const api = {
     due?: string;
     excerpt?: string;
   }) => post<Assignment>("/assignments", body),
-  extract: (file: File) => {
+  extract: async (file: File): Promise<ExtractedDocument> => {
     const data = new FormData();
     data.append("file", file);
-    return request<{ filename: string; title: string; text: string }>("/uploads/extract", {
+    const result = await request<ExtractedDocument | PendingDocument>("/uploads/extract", {
       method: "POST",
       body: data,
     });
+    if (!("document_id" in result)) return result;
+    for (let attempt = 0; attempt < 240; attempt++) {
+      const document = await request<DocumentStatus>(`/documents/${result.document_id}`);
+      if (document.status === "needs_review" && document.text !== null) {
+        return { filename: document.filename, title: document.title, text: document.text };
+      }
+      if (document.status === "failed") {
+        throw new ApiError(document.error || "Không trích xuất được văn bản từ tệp.", 422);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new ApiError("Tệp vẫn đang được xử lý. Em có thể nhập đề trực tiếp trong lúc chờ.", 504);
   },
   rubric: () => request<Rubric>("/rubric"),
   saveRubric: (criteria: Criterion[]) =>

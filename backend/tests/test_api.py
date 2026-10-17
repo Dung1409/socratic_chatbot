@@ -9,8 +9,8 @@ from backend.app.main import create_app
 
 
 @pytest.fixture
-def client(tmp_path):
-    with TestClient(create_app(str(tmp_path / "test.db"))) as c:
+def client(database):
+    with TestClient(create_app(database.path)) as c:
         yield c
 
 

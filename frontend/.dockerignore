@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.*
+*.local
+.tanstack
+.lovable
+e2e
+src/test
+test-results
+playwright-report
+*.log

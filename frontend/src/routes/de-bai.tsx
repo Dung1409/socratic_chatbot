@@ -112,7 +112,7 @@ function Page() {
       setImages([]);
       void upload(selected[0]);
     } else {
-      toast.error("Chọn một tệp PDF/Word/TXT hoặc nhiều ảnh cùng một đề");
+      toast.error("Chọn một tệp PDF/Word/ODT/văn bản hoặc nhiều ảnh cùng một tài liệu");
     }
   };
   const moveImage = (index: number, direction: number) => {
@@ -252,7 +252,7 @@ function Page() {
               </Button>
             </div>
             <span className="text-xs text-muted-foreground mt-3">
-              Tối đa 12 ảnh JPG/PNG/WEBP hoặc một tệp PDF/DOC/DOCX/TXT · mỗi tệp tối đa 10MB
+              Tối đa 12 ảnh JPG/PNG/WEBP hoặc một tệp PDF/DOC/DOCX/ODT/TXT/MD/CSV/RTF/HTML · mỗi tệp tối đa 10MB
             </span>
             <input
               ref={imageInput}
@@ -269,11 +269,11 @@ function Page() {
             />
             <input
               ref={documentInput}
-              aria-label="Chọn tệp PDF, Word hoặc TXT"
+              aria-label="Chọn tệp PDF, Word hoặc văn bản"
               disabled={busy}
               type="file"
               className="hidden"
-              accept=".pdf,.doc,.docx,.txt"
+              accept=".pdf,.doc,.docx,.odt,.txt,.md,.csv,.rtf,.html,.htm"
               onChange={(e) => {
                 chooseFiles(Array.from(e.target.files ?? []));
                 e.target.value = "";

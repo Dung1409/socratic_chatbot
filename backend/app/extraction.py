@@ -6,10 +6,12 @@ original upload is retained by the job queue; extraction never sends it to AI.
 
 import io
 import os
+import re
 import subprocess
 import tempfile
 import unicodedata
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -18,6 +20,7 @@ MAX_PDF_PAGES = 30
 MAX_IMAGE_PIXELS = 20_000_000
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 WORD_SUFFIXES = {".doc", ".docx"}
+TEXT_DOCUMENT_SUFFIXES = {".txt", ".md", ".csv", ".rtf", ".html", ".htm"}
 
 
 class ExtractionError(ValueError):
@@ -28,7 +31,7 @@ class ExtractionError(ValueError):
 
 def validate_upload(filename: str, data: bytes):
     suffix = Path(filename).suffix.lower()
-    if suffix not in {".txt", ".pdf", ".doc", ".docx", *IMAGE_SUFFIXES}:
+    if suffix not in {*TEXT_DOCUMENT_SUFFIXES, ".pdf", ".doc", ".docx", ".odt", *IMAGE_SUFFIXES}:
         raise ExtractionError("Chỉ hỗ trợ TXT, PDF, DOCX, PNG, JPG/JPEG và WEBP.", 415)
     if not data:
         raise ExtractionError("Tệp rỗng")
@@ -40,6 +43,8 @@ def validate_upload(filename: str, data: bytes):
         raise ExtractionError("Tệp DOCX không hợp lệ", 415)
     if suffix == ".doc" and data[:8] != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
         raise ExtractionError("Tệp DOC không hợp lệ", 415)
+    if suffix == ".odt" and not zipfile.is_zipfile(io.BytesIO(data)):
+        raise ExtractionError("Tệp ODT không hợp lệ", 415)
     if suffix == ".png" and not data.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ExtractionError("Tệp PNG không hợp lệ", 415)
     if suffix in {".jpg", ".jpeg"} and not data.startswith(b"\xff\xd8"):
@@ -246,6 +251,62 @@ def _decode_text(data: bytes) -> str:
     raise ExtractionError("Không đọc được mã hóa TXT; hãy lưu tài liệu dưới dạng UTF-8.", 422)
 
 
+class _HTMLTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+        self.skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "noscript"}:
+            self.skip += 1
+        elif tag in {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "tr"} and self.parts:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style", "noscript"} and self.skip:
+            self.skip -= 1
+        elif tag in {"p", "div", "li", "h1", "h2", "h3", "h4", "tr"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.skip:
+            self.parts.append(data)
+
+
+def _odt_text(data: bytes) -> str:
+    import xml.etree.ElementTree as ET
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            content = archive.read("content.xml")
+        root = ET.fromstring(content)
+    except (KeyError, OSError, ET.ParseError) as exc:
+        raise ExtractionError("Không đọc được nội dung ODT.", 422) from exc
+    values = []
+    for node in root.iter():
+        tag = node.tag.rsplit("}", 1)[-1]
+        if tag in {"p", "h", "list-item", "table-cell"}:
+            value = "".join(node.itertext()).strip()
+            if value:
+                values.append(value)
+    return "\n\n".join(values)
+
+
+def _rich_text(data: bytes, suffix: str) -> str:
+    text = _decode_text(data)
+    if suffix in {".html", ".htm"}:
+        parser = _HTMLTextParser()
+        parser.feed(text)
+        text = "".join(parser.parts)
+    elif suffix == ".rtf":
+        # Keep readable text while removing common RTF control words and groups.
+        text = re.sub(r"\\'[0-9a-fA-F]{2}", "", text)
+        text = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", text)
+        text = text.replace("{", "").replace("}", "")
+    return text
+
+
 def classify_document(text: str, filename: str = "") -> str:
     """Coarse profile used to select a subject/document parser."""
     folded = unicodedata.normalize("NFD", text.upper())
@@ -322,9 +383,9 @@ def extract_document(filename: str, data: bytes) -> dict:
     validate_upload(filename, data)
     suffix = Path(filename).suffix.lower()
     try:
-        if suffix == ".txt":
-            text = _decode_text(data)
-            pages = [{"number": 1, "label": "Tệp TXT", "text": text.strip(),
+        if suffix in TEXT_DOCUMENT_SUFFIXES:
+            text = _rich_text(data, suffix)
+            pages = [{"number": 1, "label": f"Tệp {suffix[1:].upper()}", "text": text.strip(),
                       "method": "text", "confidence": None}]
         elif suffix == ".pdf":
             pages = _pdf_pages(data)
@@ -332,6 +393,10 @@ def extract_document(filename: str, data: bytes) -> dict:
             pages = _docx_pages(data)
         elif suffix == ".doc":
             pages = _doc_pages(data)
+        elif suffix == ".odt":
+            text = _odt_text(data)
+            pages = [{"number": 1, "label": "Tệp ODT", "text": text.strip(),
+                      "method": "text", "confidence": None}]
         else:
             text, confidence = _ocr_image(_image(data))
             pages = [{"number": 1, "label": "Ảnh 1", "text": text,

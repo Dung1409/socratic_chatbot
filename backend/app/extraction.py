@@ -47,3 +47,22 @@ def extract_text(filename: str, data: bytes) -> str:
         raise
     except Exception as exc:
         raise ExtractionError("Không đọc được tệp. Kiểm tra định dạng và thử lại.") from exc
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+    from .config import positive_integer
+
+    if sys.platform == "linux":
+        import resource
+        memory = positive_integer("WORKER_PARSER_MEMORY_MB", 512) * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
+
+    # Only the file extension is an argument; content travels over stdin and is
+    # never logged. The parent worker enforces the process execution deadline.
+    try:
+        output = {"text": extract_text("document" + sys.argv[1], sys.stdin.buffer.read(MAX_FILE_BYTES + 1))}
+    except ExtractionError as error:
+        output = {"error": str(error), "status_code": error.status_code}
+    sys.stdout.buffer.write(json.dumps(output, ensure_ascii=False).encode("utf-8"))

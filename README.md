@@ -6,6 +6,10 @@ Giao diện phát triển từ [Toan0409/bloom-guided-scribe](https://github.com
 
 ## Kết nối OpenAI và đánh giá tư duy
 
+Hướng dẫn production: [Northflank + Vercel](docs/DEPLOY_NORTHFLANK_VERCEL.md).
+Docker image mặc định `APP_ENV=production`; Compose đặt rõ `development` cho local.
+Production bắt buộc PostgreSQL, Secure cookie, origin/proxy allowlist và migration Job riêng.
+
 Sau khi khởi tạo môi trường, cấu hình `OPENAI_API_KEY` trong `.env` gốc trước khi bắt đầu phiên AI. Backend tự đọc `.env`; biến môi trường tiến trình có ưu tiên cao hơn. Khóa chỉ dùng ở backend, không đưa vào frontend hoặc Git.
 
 ```dotenv

@@ -12,6 +12,7 @@ from pwdlib import PasswordHash
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from .db import Database
+from . import config
 
 ACCESS_COOKIE = "socratic_access"
 REFRESH_COOKIE = "socratic_refresh"
@@ -62,9 +63,14 @@ class AuthService:
         self.secret = os.getenv("JWT_SECRET", "")
         if len(self.secret.encode()) < 32:
             raise RuntimeError("JWT_SECRET must contain at least 32 random bytes; configure it before starting the API")
-        self.secure = os.getenv("AUTH_COOKIE_SECURE", "false").lower() == "true"
-        self.access_seconds = int(os.getenv("AUTH_ACCESS_SECONDS", "900"))
-        self.refresh_seconds = int(os.getenv("AUTH_REFRESH_SECONDS", "604800"))
+        if config.production() and (len(set(self.secret)) < 8 or any(
+                marker in self.secret.lower() for marker in ("placeholder", "replace", "change-me", "test-only"))):
+            raise RuntimeError("JWT_SECRET must be a private random signing key, not an example value")
+        self.secure = config.boolean("AUTH_COOKIE_SECURE", config.production())
+        if config.production() and not self.secure:
+            raise RuntimeError("AUTH_COOKIE_SECURE must be true in production")
+        self.access_seconds = config.positive_integer("AUTH_ACCESS_SECONDS", 900)
+        self.refresh_seconds = config.positive_integer("AUTH_REFRESH_SECONDS", 604800)
         if self.access_seconds < 1 or self.refresh_seconds <= self.access_seconds:
             raise RuntimeError("Auth token lifetimes are invalid")
         self.dummy_hash = self.passwords.hash("not-a-real-account-password")
@@ -139,11 +145,18 @@ class AuthService:
                 "csrf_token": self.csrf(session_id)}
 
     def rate_limit(self, request, email, action):
-        timestamp = time.time()
         ip = request.client.host if request.client else "unknown"
         buckets = [(f"{action}-ip:{ip}", 100 if action == "login" else 20, 900)]
         if action == "login":
             buckets.append((f"login-email:{email}", 10, 900))
+        self.consume_limits(buckets)
+
+    def resource_limit(self, user_id, resource):
+        setting, default = (("AI_REQUESTS_PER_HOUR", 60) if resource == "ai" else ("UPLOADS_PER_HOUR", 20))
+        self.consume_limits([(f"{resource}-user:{user_id}", config.positive_integer(setting, default), 3600)])
+
+    def consume_limits(self, buckets):
+        timestamp = time.time()
         with self.db.connect(write=True) as conn:
             for key, limit, window in buckets:
                 key = hashlib.sha256(key.encode()).hexdigest()

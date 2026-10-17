@@ -4,6 +4,8 @@ import path from "node:path";
 const python =
   process.platform === "win32" ? "..\\.venv\\Scripts\\python.exe" : "../.venv/bin/python";
 const testEnvironment = {
+  APP_ENV: "test",
+  AUTO_MIGRATE: "true",
   JWT_SECRET: "e2e-test-only-signing-key-with-more-than-thirty-two-bytes",
   AUTH_COOKIE_SECURE: "false",
   OPENAI_API_KEY: "",

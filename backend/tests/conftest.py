@@ -9,6 +9,9 @@ from backend.app.db import Database
 
 @pytest.fixture(autouse=True)
 def auth_settings(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("AI_REQUESTS_PER_HOUR", "1000")
+    monkeypatch.setenv("UPLOADS_PER_HOUR", "1000")
     monkeypatch.setenv("TUTOR_MODE", "template")
     monkeypatch.setenv("JWT_SECRET", "test-only-signing-key-with-more-than-thirty-two-bytes")
     monkeypatch.setenv("AUTH_COOKIE_SECURE", "false")

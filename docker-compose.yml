@@ -3,6 +3,7 @@ x-backend: &backend
     context: ./backend
     dockerfile: Dockerfile
   environment:
+    APP_ENV: development
     PGHOST: postgres
     PGPORT: "5432"
     PGDATABASE: ${POSTGRES_DB:-socratic}

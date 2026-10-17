@@ -3,6 +3,11 @@ dist
 .git
 .env
 .env.*
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/secrets
 *.local
 .tanstack
 .lovable

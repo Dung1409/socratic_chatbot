@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
+from . import config
+
 
 def encode(value):
     return json.dumps(value, ensure_ascii=False)
@@ -19,20 +21,29 @@ class Database:
 
     @classmethod
     def from_env(cls):
-        if not os.getenv("DATABASE_URL") and os.getenv("PGHOST"):
+        url = config.validate_database_url()
+        if url:
+            return cls(url)
+        if os.getenv("PGHOST"):
             user = quote(os.getenv("PGUSER", "socratic"), safe="")
             password = quote(os.getenv("PGPASSWORD", ""), safe="")
             name = quote(os.getenv("PGDATABASE", "socratic"), safe="")
             return cls(f"postgresql://{user}:{password}@{os.environ['PGHOST']}:{os.getenv('PGPORT', '5432')}/{name}")
-        return cls(os.getenv("DATABASE_URL") or os.getenv(
+        return cls(os.getenv(
             "DATABASE_PATH", str(Path(__file__).resolve().parents[1] / "data/socratic.db")))
 
     @contextmanager
     def connect(self, write=False, serialize=True):
         if self.postgres:
             import psycopg
+            from psycopg.conninfo import conninfo_to_dict
             from psycopg.rows import dict_row
-            conn = psycopg.connect(self.path, row_factory=dict_row, connect_timeout=5)
+            options = conninfo_to_dict(self.path).get("options", os.getenv("PGOPTIONS", ""))
+            conn = psycopg.connect(
+                self.path, row_factory=dict_row, connect_timeout=5,
+                options=f"{options} -c statement_timeout={config.positive_integer('DB_STATEMENT_TIMEOUT_MS', 30000)} "
+                        f"-c lock_timeout={config.positive_integer('DB_LOCK_TIMEOUT_MS', 5000)}",
+            )
         else:
             conn = sqlite3.connect(self.path, timeout=30)
             conn.row_factory = sqlite3.Row

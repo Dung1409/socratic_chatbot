@@ -1,8 +1,34 @@
 # SocraVăn — Socratic × Bloom
 
-Ứng dụng tự học Ngữ văn: học sinh tự tải lên hoặc nhập đề riêng, chọn mục tiêu Bloom, luyện tập qua đối thoại Socratic và lưu bài viết cuối phiên. Không có vai trò giáo viên, bộ đề có sẵn hoặc quy trình chờ chấm bài.
+Ứng dụng tự học **đọc hiểu và nghị luận xã hội**: học sinh nhập/tải đề và ngữ liệu, đối thoại Socratic thích ứng với OpenAI, tự tổng hợp bài làm và nhận báo cáo Bloom–tự lực cuối phiên. Không yêu cầu chọn bậc Bloom trước khi học. Phiên kịch bản cũ vẫn xem lại và tiếp tục được.
 
 Giao diện phát triển từ [Toan0409/bloom-guided-scribe](https://github.com/Toan0409/bloom-guided-scribe), commit `64c30dd7eb11b2745d17d0548c214f668cb67c91`. Backend sử dụng **FastAPI**, chạy **PostgreSQL** và worker khi dùng Docker Compose; vẫn hỗ trợ **SQLite** khi chạy Python trực tiếp.
+
+## Kết nối OpenAI và đánh giá tư duy
+
+Sau khi khởi tạo môi trường, cấu hình `OPENAI_API_KEY` trong `.env` gốc trước khi bắt đầu phiên AI. Backend tự đọc `.env`; biến môi trường tiến trình có ưu tiên cao hơn. Khóa chỉ dùng ở backend, không đưa vào frontend hoặc Git.
+
+```dotenv
+TUTOR_MODE=openai
+OPENAI_API_KEY=
+OPENAI_TUTOR_MODEL=gpt-6.1-sol
+OPENAI_ASSESSMENT_MODEL=gpt-6.1-sol
+```
+
+Hai model có thể cấu hình độc lập. Thiếu khóa hoặc API lỗi: báo rõ và giữ đề/bài làm để thử lại; không tự chuyển sang câu hỏi mẫu hoặc tạo điểm giả. `TUTOR_MODE=template` chỉ dùng cho chế độ kịch bản cũ, không chấm điểm AI. Compose truyền cấu hình từ `.env` cho backend; khởi tạo lại service sau khi đổi biến.
+
+- AI phân tích đề, xác định mục tiêu bằng lời dễ hiểu và chọn câu hỏi theo câu trả lời thực tế. Sáu nhóm Socratic không phải sáu bước bắt buộc hay sáu bậc Bloom tương ứng.
+- Thiếu đoạn trích: AI yêu cầu bổ sung; lượt cung cấp ngữ liệu không được chấm như câu trả lời tự suy luận.
+- Mỗi lượt hỗ trợ bổ sung thực sự được lưu tính một sự kiện N, dù học sinh xin gợi ý hay AI chủ động hỗ trợ do bế tắc. Câu hỏi Socratic thông thường và yêu cầu bổ sung ngữ liệu không tính N. Lý do hỗ trợ được lưu và hiển thị.
+- Học sinh có thể kết thúc đối thoại sau ít nhất một câu trả lời hoặc tiếp tục trao đổi trước khi nộp phần tổng hợp. Giới hạn 40 câu trả lời/phiên; khi chạm giới hạn, chuyển sang tổng hợp.
+- Chấm đúng **ba tầng 30–35–35**: Cơ bản (Nhớ–Hiểu), Vận dụng (Áp dụng–Phân tích), Bậc cao (Đánh giá–Sáng tạo). Không chia thành sáu tiêu chí có trọng số riêng. Mốc chất lượng trong mỗi tầng nằm ở `backend/app/assessment.py`, là hướng dẫn vận hành hóa v1 cần đối chiếu với bài chấm mẫu của giáo viên.
+- `B = Cơ bản + Vận dụng + Bậc cao`; `A = max(0.3, 1 - 0.1*N)`; `S = B*A`. Backend dùng Decimal, làm tròn khi hiển thị và xếp loại từ giá trị gốc: `[80,100]` Xuất sắc, `[65,80)` Khá, `[50,65)` Trung bình, dưới 50 Cần Rèn Luyện.
+- AI phải trích nguyên văn và chỉ đúng ID câu trả lời/bài tổng hợp làm bằng chứng; backend từ chối điểm vượt thang, bằng chứng không tồn tại hoặc trích từ AI/ngữ liệu bổ sung. Báo cáo có điểm từng tầng, B, N, A, S, xếp loại, điểm mạnh và bước luyện tiếp theo.
+- Thiếu bằng chứng cho cả ba tầng: `insufficient_evidence`, giữ điểm từng tầng đã quan sát, B/S/xếp loại là `null`; không quy thiếu dữ liệu thành 0. Xếp loại mô tả kết quả phiên, không phải năng lực ổn định hay bảng xếp hạng giữa các đề khác nhau.
+- OpenAI dùng Responses API + Structured Outputs, `store=false`, chạy ngoài giao dịch database. Yêu cầu đang xử lý/lỗi được lưu bền vững để thử lại hoặc hủy sau khi tải lại trang. Lease 120 giây và khóa phiên bản ngăn phản hồi cũ ghi đè; gửi lại cùng mã không tạo thêm câu trả lời hoặc sự kiện hỗ trợ.
+- Phiên mới lưu model đối thoại, model đánh giá, phiên bản chính sách và phiên bản chấm điểm. Thay model cấu hình không tự đổi model của phiên đang học.
+
+Kiểm thử dùng provider giả lập và kiểm tra SDK thật qua HTTP mock; không chứng minh chất lượng sư phạm hoặc độ chính xác chấm điểm của model. Cần chạy tập bài giữ lại có giáo viên chấm đối chiếu trước khi dùng điểm trong nghiên cứu chính thức.
 
 ## Chạy trên Windows
 
@@ -123,8 +149,8 @@ hiển thị nội dung để người dùng kiểm tra. Có thể tạo job tr�
 Worker claim job bằng khóa hàng `FOR UPDATE SKIP LOCKED`, có lease 120 giây,
 gia hạn khi xử lý, retry lỗi tạm thời tối đa ba lần và nhận lại job có lease
 hết hạn sau khi tiến trình bị dừng. Token của lease ngăn worker cũ ghi đè kết
-quả mới. Job và dữ liệu gốc vẫn còn nếu API/worker restart. Worker hiện xử lý
-trích xuất; chưa có tác vụ đánh giá LLM hoặc điểm số tự động.
+quả mới. Job và dữ liệu gốc vẫn còn nếu API/worker restart. Worker xử lý trích xuất;
+đối thoại và đánh giá OpenAI chạy qua API phiên học, ngoài giao dịch database.
 
 ```powershell
 # Xem log
@@ -153,18 +179,18 @@ Compose mặc định chỉ mở cổng trên `127.0.0.1`, phù hợp chế đ�
 
 - Đăng ký, đăng nhập, đăng xuất và tự làm mới phiên bằng JWT trong HttpOnly Cookie; tài khoản và phiên đăng nhập lưu trong PostgreSQL khi dùng Compose.
 - Đề, tệp và phiên học được kiểm tra chủ sở hữu trên từng request. Các tài khoản không đọc hoặc sửa dữ liệu của nhau.
-- Tải đề riêng bằng TXT UTF-8, DOCX hoặc PDF có chữ (tối đa 10MB, PDF tối đa 30 trang), hoặc nhập nội dung trực tiếp. Kiểm tra/sửa nội dung và chọn mục tiêu Bloom trước khi xác nhận.
+- Tải đề riêng bằng TXT UTF-8, DOCX hoặc PDF có chữ (tối đa 10MB, PDF tối đa 30 trang), hoặc nhập nội dung trực tiếp. Chọn đọc hiểu/nghị luận xã hội, bổ sung ngữ liệu và khối lớp nếu có.
 - Danh sách chỉ hiển thị các đề người dùng tạo. Bản cài mới bắt đầu trống; mở trang phiên học khi chưa có dữ liệu sẽ hướng dẫn thêm đề thay vì tự tạo phiên mẫu.
-- Bắt đầu đúng đề đã chọn; lưu đối thoại, ba mức gợi ý, tiến độ và bài viết cuối phiên vào PostgreSQL hoặc SQLite. Tải lại trang để tiếp tục. Bản nháp lưu trong trình duyệt.
+- Bắt đầu đúng đề đã chọn; lưu đối thoại, các lượt hỗ trợ và bài viết cuối phiên vào PostgreSQL hoặc SQLite. Tải lại trang để tiếp tục. Bản nháp lưu trong trình duyệt; yêu cầu AI chưa hoàn tất còn được lưu ở backend.
 - Chống gửi trùng bằng `client_message_id`, chống ghi đè khi nhiều yêu cầu gửi cùng lúc bằng phiên bản trạng thái.
 - Lưu bài viết để hoàn thành phiên, xem lại đối thoại và bài viết trong nhật ký tự học.
-- Tổng quan và tiến trình hiển thị số câu trả lời, gợi ý, số phiên hoàn thành và hoạt động theo Bloom. Không có màn hình chấm điểm, trạng thái chờ giáo viên hoặc API giáo viên/rubric/review.
+- Tổng quan và tiến trình hiển thị hoạt động theo Bloom; phiên AI mới có báo cáo B–N–A–S, xếp loại và bằng chứng. Không có quy trình chờ giáo viên hoặc API giáo viên/rubric/review.
 
 ## Phạm vi bản local
 
-Gia sư hiện dùng **kịch bản câu hỏi**, chưa tích hợp LLM. Các đề riêng dùng chuỗi câu hỏi chung theo mục tiêu Bloom học sinh chọn. Chưa đánh giá tự động câu trả lời hoặc kết luận năng lực Bloom. Biểu đồ Bloom thể hiện số câu đã luyện tập; bài viết được lưu để người học tự xem lại.
+Gia sư mặc định dùng **OpenAI** cho đọc hiểu và nghị luận xã hội. Phiên kịch bản cũ không được tự gán điểm hoặc chuyển sang AI. Biểu đồ Bloom vẫn đếm hoạt động; điểm đánh giá nằm riêng trong báo cáo cuối phiên.
 
-Đã có tài khoản và tách dữ liệu theo người dùng. Đã bỏ hồ sơ lớp và học sinh mẫu. PostgreSQL, migration và worker trích xuất lưu tệp gốc chạy trong Compose. Chưa hỗ trợ OCR ảnh/PDF scan, đánh giá LLM hoặc xuất dữ liệu nghiên cứu. Dữ liệu nghiệp vụ hiện giữ cấu trúc JSON trong bảng `documents`.
+Đã có tài khoản và tách dữ liệu theo người dùng. PostgreSQL, migration và worker trích xuất lưu tệp gốc chạy trong Compose. Chưa hỗ trợ OCR ảnh/PDF scan hoặc xuất dữ liệu nghiên cứu. Dữ liệu nghiệp vụ giữ cấu trúc JSON trong bảng `documents`; trường phiên AI mới không yêu cầu di chuyển/xóa phiên cũ.
 
 ## Đăng ký và đăng nhập
 
@@ -239,6 +265,9 @@ backend/
   app/extraction.py # Trích xuất TXT, DOCX, PDF có chữ
   app/schemas.py    # Kiểm tra dữ liệu đầu vào
   app/tutor.py      # Chuỗi câu hỏi ở chế độ kịch bản
+  app/ai_tutor.py   # OpenAI Responses và chính sách Socratic
+  app/adaptive.py   # Phiên AI, yêu cầu bền vững, lease và chống gửi trùng
+  app/assessment.py # Ba tầng Bloom, kiểm tra bằng chứng, tính B–A–S
   tests/            # Kiểm thử nghiệp vụ và API
 frontend/
   src/routes/       # Các màn hình React/TanStack Router

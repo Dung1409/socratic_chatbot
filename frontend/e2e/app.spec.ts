@@ -6,7 +6,13 @@ async function register(page: Page, email: string, name: string) {
   await page.getByRole("textbox", { name: "Email", exact: true }).fill(email);
   await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
   await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill("Strong test password 123");
+  const registered = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/register") && response.request().method() === "POST",
+    { timeout: 15000 },
+  );
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
+  expect((await registered).status()).toBe(201);
   await expect(
     page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
   ).toBeVisible();
@@ -33,7 +39,7 @@ test("start from an empty workspace, study a personal assignment and save the fi
   await page
     .getByRole("textbox", { name: "Nội dung đề", exact: true })
     .fill("Hãy trình bày quan điểm về ý nghĩa của việc đọc sách và đưa ra dẫn chứng cụ thể.");
-  await page.getByLabel("Mục tiêu luyện tập").selectOption("6");
+  await page.getByLabel("Dạng bài").selectOption("social");
   await page.getByRole("button", { name: "Xác nhận đề & bắt đầu học" }).click();
   await expect(page.getByRole("heading", { name: "Tự học về ý nghĩa của đọc sách" })).toBeVisible();
   await page.getByRole("button", { name: "Gợi ý mức 1 · Định hướng" }).click();
@@ -90,7 +96,7 @@ test("upload, edit extracted text before confirmation and navigate on mobile", a
   const edited =
     "Viết đoạn văn về trách nhiệm của tuổi trẻ với cộng đồng, có dẫn chứng và phản biện.";
   await page.getByRole("textbox", { name: "Nội dung đề", exact: true }).fill(edited);
-  await page.getByLabel("Mục tiêu luyện tập").selectOption("3");
+  await page.getByLabel("Dạng bài").selectOption("social");
   await page.getByRole("button", { name: "Xác nhận đề & bắt đầu học" }).click();
   await expect(page.getByRole("heading", { name: "Đề riêng về trách nhiệm" })).toBeVisible();
   await expect(page.getByText(edited, { exact: true })).toBeVisible();

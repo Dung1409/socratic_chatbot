@@ -7,9 +7,12 @@ export type Assignment = {
   source: string;
   status: string;
   progress: number;
+  task_type?: "reading" | "social";
+  source_text?: string;
+  grade?: 10 | 11 | 12 | null;
 };
 export type Step = { level: number; q: string; hints: string[] };
-export type Turn =
+export type Turn = (
   | { kind: "tutor"; step: number; text: string; level: number }
   | { kind: "hint"; step: number; tier: number; text: string }
   | {
@@ -19,7 +22,36 @@ export type Turn =
       level: number;
       quality: number | null;
       hints: number;
-    };
+    }
+) & {
+  id?: string;
+  purpose?: "source" | "answer";
+  response_kind?: "question" | "support" | "source_request" | "ready";
+  objective?: string;
+  strategy?: string;
+};
+export type Assessment = {
+  status: "complete" | "insufficient_evidence";
+  dimensions: {
+    key: string;
+    name: string;
+    maximum: number;
+    observed: boolean;
+    points: number | null;
+    rationale: string;
+    evidence: { source_id: string; quote: string }[];
+  }[];
+  coverage: number;
+  bloom: number | null;
+  hint_count: number;
+  autonomy: number;
+  score: number | null;
+  classification: string | null;
+  raw_score: string | null;
+  strengths: string[];
+  next_steps: string[];
+  scoring_version: string;
+};
 export type Session = {
   id: string;
   assignment_id: string;
@@ -36,6 +68,22 @@ export type Session = {
   updated_at: string;
   submitted_at?: string;
   tutor_mode: string;
+  current_objective?: string;
+  plan?: { summary: string; objectives: string[]; task_type: "reading" | "social" };
+  support_events?: {
+    id: string;
+    turn_id: string;
+    reason: string;
+    origin: string;
+    counted_for_autonomy: boolean;
+  }[];
+  assessment?: Assessment | null;
+  pending_action?: {
+    action: "message" | "hint" | "submit";
+    text: string;
+    client_message_id: string;
+    status: "processing" | "failed";
+  } | null;
 };
 export type Dashboard = {
   sessions: number;
@@ -208,7 +256,10 @@ export const api = {
   createAssignment: (body: {
     title: string;
     prompt: string;
-    target: number;
+    target?: number;
+    task_type?: "reading" | "social";
+    source_text?: string;
+    grade?: 10 | 11 | 12 | null;
     document_id?: string;
   }) => post<Assignment>("/assignments", body),
   extract: async (file: File): Promise<ExtractedDocument> => {
@@ -255,6 +306,11 @@ export const api = {
   submit: (session: Session, essay: string, key: string) =>
     post<Session>(`/sessions/${session.id}/submit`, {
       essay,
+      expected_version: session.version,
+      client_message_id: key,
+    }),
+  action: (session: Session, action: "finish" | "continue" | "cancel", key: string) =>
+    post<Session>(`/sessions/${session.id}/${action}`, {
       expected_version: session.version,
       client_message_id: key,
     }),

@@ -10,6 +10,10 @@ x-backend: &backend
     PGPASSWORD: ${POSTGRES_PASSWORD:-socratic_local_only}
     AUTO_MIGRATE: "false"
     BACKGROUND_JOBS: "true"
+    TUTOR_MODE: ${TUTOR_MODE:-openai}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    OPENAI_TUTOR_MODEL: ${OPENAI_TUTOR_MODEL:-gpt-6.1-sol}
+    OPENAI_ASSESSMENT_MODEL: ${OPENAI_ASSESSMENT_MODEL:-gpt-6.1-sol}
     STORAGE_PATH: /app/storage
     JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file before starting the stack}
     AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from dotenv import load_dotenv
+
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,8 +18,11 @@ from .extraction import ExtractionError, MAX_FILE_BYTES, extract_text, validate_
 from .jobs import JobQueue
 from .schemas import AssignmentInput, SessionInput, ActionInput, MessageInput, SubmissionInput
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
+from .ai_tutor import OpenAITutor
+from .adaptive import AdaptiveSessions, public_pending
 
 ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / ".env", override=False)
 
 
 def now():
@@ -32,8 +37,11 @@ def require(conn, collection, identifier, owner_id):
 
 
 def public_session(session):
-    return {key: value for key, value in session.items()
+    result = {key: value for key, value in session.items()
             if key not in {"requests", "rubric", "review", "student_id", "student_name", "class_name"}}
+    if session.get("tutor_mode") == "openai":
+        result["pending_action"] = public_pending(session.get("pending_action"))
+    return result
 
 
 def saved_sessions(conn, owner_id):
@@ -41,11 +49,16 @@ def saved_sessions(conn, owner_id):
 
 
 def create_app(database_path: str | None = None, frontend_dist: Path | None = None,
-               storage_path: Path | None = None):
+               storage_path: Path | None = None, tutor_engine=None):
     db = Database(database_path) if database_path else Database.from_env()
     background_jobs = os.getenv("BACKGROUND_JOBS", "false").lower() == "true"
     queue = JobQueue(db, storage_path or Path(os.getenv("STORAGE_PATH", str(ROOT / "backend/data/uploads"))))
     auth = AuthService(db)
+    tutor = tutor_engine or OpenAITutor()
+    tutor_mode = os.getenv("TUTOR_MODE", "openai")
+    if tutor_mode not in ("openai", "template"):
+        raise ValueError("TUTOR_MODE must be openai or template")
+    adaptive = AdaptiveSessions(db, tutor)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -59,7 +72,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         yield
 
     app = FastAPI(title="SocraVăn API", version="0.1.0", lifespan=lifespan,
-                  description="Tự học Socratic × Bloom. Tài khoản và dữ liệu riêng tư; xác thực JWT qua HttpOnly Cookie. Gia sư hiện dùng kịch bản.")
+                  description="Đối thoại Socratic thích ứng cho đọc hiểu/nghị luận xã hội; đánh giá Bloom và mức tự lực.")
     app.state.db = db
     app.state.queue = queue
     app.state.auth = auth
@@ -89,7 +102,8 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
 
     @app.get("/api/health", tags=["System"])
     def health():
-        return {"status": "ok", "tutor_mode": "template", "auth_mode": "jwt_cookie"}
+        return {"status": "ok", "tutor_mode": tutor_mode, "auth_mode": "jwt_cookie",
+                "ai_configured": tutor.configured if tutor_mode == "openai" else False}
 
     @app.get("/api/ready", tags=["System"])
     def ready():
@@ -110,7 +124,9 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             for a in items:
                 session = next((s for s in sessions if s["assignment_id"] == a["id"]), None)
                 a["status"] = "Đã hoàn thành" if session and session["submitted"] else "Đang học" if session else "Chưa bắt đầu"
-                a["progress"] = 100 if session and session["submitted"] else round(session["step"] / len(session["steps"]) * 100) if session else 0
+                a["progress"] = (100 if session and session["submitted"] else
+                                 round(session["step"] / len(session["steps"]) * 100)
+                                 if session and session.get("steps") else 0)
             return items
 
     @app.post("/api/assignments", status_code=201, tags=["Assignments"])
@@ -160,6 +176,15 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
 
     @app.post("/api/sessions", tags=["Sessions"])
     def start_session(body: SessionInput, user: Principal = Depends(auth.current_user)):
+        with db.connect() as conn:
+            assignment = require(conn, "assignments", body.assignment_id, user.id)
+            existing = next((s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id), None)
+        if existing:
+            return public_session(existing)
+        if assignment.get("source") == "legacy_seed":
+            raise HTTPException(404, "Hãy tải lên hoặc nhập đề riêng để bắt đầu tự học")
+        if tutor_mode == "openai":
+            return public_session(adaptive.start(assignment, user.id))
         with db.connect(write=True) as conn:
             assignment = require(conn, "assignments", body.assignment_id, user.id)
             # Repeated starts (including a remount or double click) resume the saved session.
@@ -189,6 +214,12 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             return public_session(require(conn, "sessions", session_id, user.id))
 
     def mutate(session_id, body, action, owner_id):
+        with db.connect() as conn:
+            saved = require(conn, "sessions", session_id, owner_id)
+        if saved.get("tutor_mode") == "openai":
+            return public_session(adaptive.mutate(session_id, body, action, owner_id))
+        if action not in ("hint", "message", "submit"):
+            raise HTTPException(409, "Thao tác này chỉ áp dụng cho phiên AI thích ứng.")
         with db.connect(write=True) as conn:
             session = require(conn, "sessions", session_id, owner_id)
             fingerprint = hashlib.sha256(json.dumps({"action": action, **body.model_dump()}, sort_keys=True).encode()).hexdigest()
@@ -240,11 +271,23 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def submit(session_id: str, body: SubmissionInput, user: Principal = Depends(auth.current_user)):
         return mutate(session_id, body, "submit", user.id)
 
+    @app.post("/api/sessions/{session_id}/finish", tags=["Sessions"])
+    def finish(session_id: str, body: ActionInput, user: Principal = Depends(auth.current_user)):
+        return mutate(session_id, body, "finish", user.id)
+
+    @app.post("/api/sessions/{session_id}/continue", tags=["Sessions"])
+    def continue_session(session_id: str, body: ActionInput, user: Principal = Depends(auth.current_user)):
+        return mutate(session_id, body, "continue", user.id)
+
+    @app.post("/api/sessions/{session_id}/cancel", tags=["Sessions"])
+    def cancel(session_id: str, body: ActionInput, user: Principal = Depends(auth.current_user)):
+        return mutate(session_id, body, "cancel", user.id)
+
     @app.get("/api/dashboard", tags=["Analytics"])
     def dashboard(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
             saved = saved_sessions(conn, user.id)
-            answers = [t for s in saved for t in s["turns"] if t["kind"] == "student"]
+            answers = [t for s in saved for t in s["turns"] if t["kind"] == "student" and t.get("purpose") != "source"]
             hints = sum(t["kind"] == "hint" for s in saved for t in s["turns"])
             return {"sessions": len(saved), "answers": len(answers), "hints": hints,
                     "hints_per_answer": round(hints / len(answers), 1) if answers else 0,
@@ -256,7 +299,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         with db.connect() as conn:
             saved = saved_sessions(conn, user.id)
             return {
-                "bloom_profile": [{"skill": name, "value": sum(t["kind"] == "student" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)],
+                "bloom_profile": [{"skill": name, "value": sum(t["kind"] == "student" and t.get("purpose") != "source" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)],
                 "sessions": [public_session(s) for s in saved],
             }
 

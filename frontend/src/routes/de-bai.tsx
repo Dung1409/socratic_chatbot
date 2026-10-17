@@ -3,14 +3,13 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FileUp, FileText, ArrowRight } from "lucide-react";
-import { PageHeader, Panel, BloomBadge } from "@/components/AppShell";
+import { PageHeader, Panel } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { ApiState } from "@/components/ApiState";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { seo } from "@/lib/seo";
-import { BLOOM } from "@/lib/data";
 
 export const Route = createFileRoute("/de-bai")({
   head: () =>
@@ -24,7 +23,9 @@ function Page() {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [documentId, setDocumentId] = useState<string | undefined>();
-  const [target, setTarget] = useState(4);
+  const [taskType, setTaskType] = useState<"reading" | "social">("social");
+  const [sourceText, setSourceText] = useState("");
+  const [grade, setGrade] = useState<10 | 11 | 12 | null>(null);
   const query = useQuery({ queryKey: ["assignments"], queryFn: api.assignments });
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -54,7 +55,9 @@ function Page() {
       const result = await api.createAssignment({
         title: title.trim(),
         prompt: text.trim(),
-        target,
+        task_type: taskType,
+        source_text: sourceText.trim(),
+        grade,
         ...(documentId ? { document_id: documentId } : {}),
       });
       await client.invalidateQueries({ queryKey: ["assignments"] });
@@ -92,8 +95,14 @@ function Page() {
                     <h3 className="font-semibold mt-1">{a.title}</h3>
                     <p className="text-sm text-foreground/80 mt-2">{a.prompt}</p>
                     <div className="mt-3 flex items-center gap-2 text-xs">
-                      <span className="text-muted-foreground">Mục tiêu</span>
-                      <BloomBadge level={a.target} />
+                      <span className="rounded-full bg-muted px-2.5 py-1">
+                        {a.task_type === "reading"
+                          ? "Đọc hiểu"
+                          : a.task_type === "social"
+                            ? "Nghị luận xã hội"
+                            : "Đề tự học"}
+                      </span>
+                      {a.grade && <span className="text-muted-foreground">Lớp {a.grade}</span>}
                     </div>
                   </div>
                   <div className="flex md:flex-col items-center md:items-end justify-between gap-3">
@@ -181,18 +190,40 @@ function Page() {
               />
             </label>
             <label className="block text-sm font-medium">
-              Mục tiêu luyện tập
+              Dạng bài
               <select
                 className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                value={target}
-                onChange={(event) => setTarget(Number(event.target.value))}
+                value={taskType}
+                onChange={(event) => setTaskType(event.target.value as "reading" | "social")}
               >
-                {BLOOM.map((bloom) => (
-                  <option key={bloom.level} value={bloom.level}>
-                    Bloom {bloom.level} · {bloom.name}
-                  </option>
-                ))}
+                <option value="social">Nghị luận xã hội</option>
+                <option value="reading">Đọc hiểu</option>
               </select>
+            </label>
+            <label className="block text-sm font-medium">
+              Khối lớp (không bắt buộc)
+              <select
+                className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                value={grade ?? ""}
+                onChange={(event) =>
+                  setGrade(event.target.value ? (Number(event.target.value) as 10 | 11 | 12) : null)
+                }
+              >
+                <option value="">Chưa chọn</option>
+                <option value="10">Lớp 10</option>
+                <option value="11">Lớp 11</option>
+                <option value="12">Lớp 12</option>
+              </select>
+            </label>
+            <label className="block text-sm font-medium">
+              Ngữ liệu / đoạn trích liên quan
+              <Textarea
+                className="mt-1.5 min-h-28"
+                value={sourceText}
+                onChange={(event) => setSourceText(event.target.value)}
+                maxLength={30000}
+                placeholder="Dán đoạn trích hoặc tài liệu cần dùng. Có thể để trống nếu nội dung đề đã đầy đủ."
+              />
             </label>
             <Button
               className="w-full"
@@ -203,8 +234,9 @@ function Page() {
             </Button>
           </form>
           <div className="mt-6 text-xs text-muted-foreground leading-relaxed">
-            Bạn chọn mục tiêu luyện tập cho từng đề. Gia sư hiện đặt câu hỏi theo kịch bản; chưa hỗ
-            trợ OCR ảnh chụp hoặc tự phân tích đề bằng AI.
+            AI phân tích đề và đặt câu hỏi theo câu trả lời của em. Cuối phiên, hệ thống đánh giá ba
+            tầng Bloom và mức tự lực. Nếu thiếu ngữ liệu, gia sư sẽ yêu cầu em bổ sung. Tệp ảnh và
+            PDF scan chưa được hỗ trợ.
           </div>
         </Panel>
       </div>

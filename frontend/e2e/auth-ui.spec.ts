@@ -19,12 +19,12 @@ test("auth layouts fit desktop, tablet and mobile with accessible touch targets"
         true,
       );
       const email = page.getByRole("textbox", { name: "Email", exact: true });
-      expect((await email.boundingBox())?.height).toBe(48);
+      expect((await email.boundingBox())?.height).toBeCloseTo(48, 2);
       const action = page.getByRole("button", {
         name: route === "/dang-ky" ? "Tạo tài khoản" : "Đăng nhập",
         exact: true,
       });
-      expect((await action.boundingBox())?.height).toBe(48);
+      expect((await action.boundingBox())?.height).toBeCloseTo(48, 2);
       if (size.width < 768) {
         await expect(page.locator(".auth-conversation")).toBeHidden();
         await expect(page.locator(".auth-mobile-brand")).toBeVisible();
@@ -113,6 +113,11 @@ test("real registration accepts eight characters, blocks repeat submit and repor
   await page.getByLabel("Mật khẩu", { exact: true }).fill("Abc123!x");
   const confirmation = page.getByLabel("Xác nhận mật khẩu", { exact: true });
   await confirmation.fill("Abc123!x");
+  const registered = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/register") && response.request().method() === "POST",
+    { timeout: 15000 },
+  );
   await confirmation.press("Enter");
   try {
     await expect(
@@ -124,6 +129,7 @@ test("real registration accepts eight characters, blocks repeat submit and repor
   } finally {
     release();
   }
+  expect((await registered).status()).toBe(201);
   await expect(page.getByText("Tạo tài khoản thành công", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
@@ -135,7 +141,13 @@ test("real registration accepts eight characters, blocks repeat submit and repor
   await email.fill(emailAddress.toUpperCase());
   await page.getByLabel("Mật khẩu", { exact: true }).fill("Abc123!x");
   await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill("Abc123!x");
+  const duplicate = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/auth/register") && response.request().method() === "POST",
+    { timeout: 15000 },
+  );
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
+  expect((await duplicate).status()).toBe(409);
   await expect(page.getByText("Email này đã được đăng ký.", { exact: true })).toBeVisible();
   await expect(email).toBeFocused();
   await expect(email).toHaveAttribute("aria-invalid", "true");

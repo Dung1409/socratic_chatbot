@@ -21,7 +21,7 @@ class JobQueue:
             raise ValueError("Invalid storage key")
         return path
 
-    def submit(self, filename: str, data: bytes):
+    def submit(self, filename: str, data: bytes, owner_id=None):
         validate_upload(filename, data)
         document_id, job_id = str(uuid4()), str(uuid4())
         storage_key = f"{document_id}{Path(filename).suffix.lower()}"
@@ -33,10 +33,10 @@ class JobQueue:
             with self.db.connect(write=True, serialize=False) as conn:
                 self.db.execute(conn, """
                     INSERT INTO uploaded_documents
-                    (id, filename, storage_key, sha256, status, title, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, 'uploaded', ?, ?, ?)
+                    (id, filename, storage_key, sha256, status, title, created_at, updated_at, owner_id)
+                    VALUES (?, ?, ?, ?, 'uploaded', ?, ?, ?, ?)
                 """, (document_id, filename, storage_key, hashlib.sha256(data).hexdigest(),
-                      Path(filename).stem, timestamp, timestamp))
+                      Path(filename).stem, timestamp, timestamp, owner_id))
                 self.db.execute(conn, """
                     INSERT INTO jobs (id, document_id, type, status, available_at, created_at, updated_at)
                     VALUES (?, ?, 'extract_document', 'queued', ?, ?, ?)
@@ -46,14 +46,19 @@ class JobQueue:
             raise
         return {"document_id": document_id, "job_id": job_id, "status": "uploaded"}
 
-    def document(self, document_id: str):
+    def document(self, document_id: str, owner_id=None):
         with self.db.connect() as conn:
-            row = self.db.execute(conn, """
+            query = """
                 SELECT d.id AS document_id, j.id AS job_id, d.filename, d.title,
                        d.status, d.extracted_text AS text, d.extracted_pages,
                        d.extraction_warnings, d.error, j.attempts
                 FROM uploaded_documents d JOIN jobs j ON j.document_id=d.id WHERE d.id=?
-            """, (document_id,)).fetchone()
+            """
+            params = (document_id,)
+            if owner_id is not None:
+                query += " AND d.owner_id=?"
+                params += (owner_id,)
+            row = self.db.execute(conn, query, params).fetchone()
         if row is None:
             return None
         result = dict(row)

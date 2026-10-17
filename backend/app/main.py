@@ -12,9 +12,10 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from .db import Database
 from .auth import AuthService, Principal, UNSAFE_METHODS, auth_router
-from .extraction import ExtractionError, MAX_FILE_BYTES, extract_text, validate_upload
+from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, validate_upload
+from .structure import structure_text
 from .jobs import JobQueue
-from .schemas import AssignmentInput, SessionInput, ActionInput, MessageInput, SubmissionInput
+from .schemas import AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -132,10 +133,16 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         if background_jobs:
             return JSONResponse(queue.submit(filename, data, owner_id=user.id), status_code=202)
         try:
-            text = extract_text(filename, data)
+            extracted = extract_document(filename, data)
         except ExtractionError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
-        return {"filename": filename, "title": Path(filename).stem, "text": text, "needs_confirmation": True}
+        return {"filename": filename, "title": Path(filename).stem, **extracted,
+                "structure": structure_text(extracted["text"], extracted["pages"]),
+                "needs_confirmation": True}
+
+    @app.post("/api/uploads/structure", tags=["Assignments"])
+    def analyze_structure(body: StructureInput, user: Principal = Depends(auth.current_user)):
+        return structure_text(body.text, [page.model_dump() for page in body.pages] if body.pages else None)
 
     def read_upload(file):
         filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1][:300]

@@ -34,13 +34,13 @@ def validate_upload(filename: str, data: bytes):
     if suffix == ".pdf" and not data.startswith(b"%PDF-"):
         raise ExtractionError("Tệp PDF không hợp lệ")
     if suffix == ".docx" and not zipfile.is_zipfile(io.BytesIO(data)):
-        raise ExtractionError("Tệp DOCX không hợp lệ")
+        raise ExtractionError("Tệp DOCX không hợp lệ", 415)
     if suffix == ".png" and not data.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise ExtractionError("Tệp PNG không hợp lệ")
+        raise ExtractionError("Tệp PNG không hợp lệ", 415)
     if suffix in {".jpg", ".jpeg"} and not data.startswith(b"\xff\xd8"):
-        raise ExtractionError("Tệp JPG không hợp lệ")
+        raise ExtractionError("Tệp JPG không hợp lệ", 415)
     if suffix == ".webp" and not (data.startswith(b"RIFF") and data[8:12] == b"WEBP"):
-        raise ExtractionError("Tệp WEBP không hợp lệ")
+        raise ExtractionError("Tệp WEBP không hợp lệ", 415)
 
 
 def _image(data: bytes):

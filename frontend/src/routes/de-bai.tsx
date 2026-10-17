@@ -36,6 +36,7 @@ function Page() {
   const [sourcePages, setSourcePages] = useState<SourcePage[] | null>(null);
   const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
   const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([]);
+  const [selectedBlockId, setSelectedBlockId] = useState("");
   const [documentType, setDocumentType] = useState("reference_document");
   const [images, setImages] = useState<ImageItem[]>([]);
   const [imageCache, setImageCache] = useState<Record<string, SourcePage>>({});
@@ -69,6 +70,7 @@ function Page() {
       setSourcePages(result.pages ?? null);
       setSourceWarnings(result.warnings ?? []);
       setContentBlocks(result.blocks ?? []);
+      setSelectedBlockId("");
       setDocumentType(result.document_type ?? "reference_document");
       applyStructure(result.structure ?? await api.structure(result.text, result.pages));
     } catch (error) {
@@ -96,6 +98,7 @@ function Page() {
       setSourcePages(null);
       setSourceWarnings([]);
       setContentBlocks([]);
+      setSelectedBlockId("");
       setDocumentType("reference_document");
       setSelectedId("");
       setPrompt("");
@@ -152,6 +155,7 @@ function Page() {
         id: `page-${page.number}`, type: "paragraph", text: page.text,
         page: page.number, method: page.method,
       }] : []));
+      setSelectedBlockId("");
       setDocumentType("image_note");
       applyStructure(parsed);
     } catch (error) {
@@ -169,6 +173,7 @@ function Page() {
       setContentBlocks(text.trim().split(/\n\s*\n/).filter(Boolean).map((value, index) => ({
         id: `manual-${index + 1}`, type: "paragraph", text: value.trim(), page: 1, method: "text",
       })));
+      setSelectedBlockId("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không tách được đề bài");
     } finally {
@@ -207,6 +212,7 @@ function Page() {
   const selectedQuestion = selectedPart?.questions.find((question) =>
     question.id === selectedId || question.ideas.some((idea) => idea.id === selectedId));
   const selectedIdea = selectedQuestion?.ideas.find((idea) => idea.id === selectedId);
+  const selectedBlock = contentBlocks.find((block) => block.id === selectedBlockId);
   return (
     <>
       <PageHeader
@@ -335,6 +341,7 @@ function Page() {
                     setStructure(null);
                     setSourcePages(null);
                     setContentBlocks([]);
+                    setSelectedBlockId("");
                     setSelectedId("");
                     setPrompt("");
                   }}
@@ -371,13 +378,17 @@ function Page() {
                     </summary>
                     <div className="mt-4 max-h-[30rem] space-y-3 overflow-y-auto pr-2">
                       {contentBlocks.map((block) => (
-                        <article key={block.id} className="rounded-lg border bg-background p-3">
+                        <button key={block.id} type="button" onClick={() => {
+                          setSelectedBlockId(block.id);
+                          setSelectedId(block.id);
+                          setPrompt(block.text);
+                        }} className={`w-full rounded-lg border bg-background p-3 text-left transition-colors ${selectedBlockId === block.id ? "border-primary bg-primary/5" : "hover:border-primary/50"}`}>
                           <div className="mb-1 flex items-center justify-between gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
                             <span>{block.type === "heading" ? "Tiêu đề" : block.type === "list_item" ? "Ý / danh sách" : "Đoạn văn"}</span>
                             <span>Trang {block.page} · {block.method}</span>
                           </div>
                           <p className="whitespace-pre-wrap text-sm leading-7">{block.text}</p>
-                        </article>
+                        </button>
                       ))}
                     </div>
                   </details>
@@ -474,6 +485,19 @@ function Page() {
                       )}
                     </article>
                   )}
+                  {!selectedQuestion && selectedBlock && (
+                    <article className="min-w-0 space-y-4 rounded-xl border bg-background p-4 shadow-sm sm:p-6">
+                      <header className="border-b pb-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Khối nội dung đã chọn · Trang {selectedBlock.page}</p>
+                        <h3 className="mt-1 text-xl font-semibold">Sẵn sàng học Socratic</h3>
+                      </header>
+                      <section className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-primary">Nội dung làm điểm bắt đầu</h4>
+                        <p className="mt-3 whitespace-pre-wrap text-sm leading-7">{selectedBlock.text}</p>
+                      </section>
+                      <p className="text-sm text-muted-foreground">Em có thể sửa nội dung bên dưới trước khi bắt đầu. Gia sư sẽ dùng khối này để đặt câu hỏi gợi mở.</p>
+                    </article>
+                  )}
                 </div>
                 <div className="space-y-3 border-t pt-4">
                   {structure.excluded.length > 0 && (
@@ -500,7 +524,7 @@ function Page() {
               disabled={busy || !structure || !selectedId || title.trim().length < 5 ||
                 prompt.trim().length < 15}
             >
-              {busy ? "Đang xử lý…" : "Xác nhận câu này & bắt đầu học"}
+              {busy ? "Đang xử lý…" : selectedBlockId ? "Xác nhận nội dung này & bắt đầu học" : "Xác nhận câu này & bắt đầu học"}
             </Button>
           </form>
           <div className="mt-6 text-xs text-muted-foreground leading-relaxed">

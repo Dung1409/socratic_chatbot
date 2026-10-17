@@ -84,14 +84,44 @@ class AdaptiveSessions:
             "support_events": [], "assessment": None, "pending_action": None,
             "version": 0, "requests": {}, "created_at": timestamp(), "updated_at": timestamp(),
         }
+        if assignment.get("active_item_id"):
+            session["opening_item_id"] = assignment["active_item_id"]
         response_turn(plan.opening, session)
         with self.db.connect(write=True) as conn:
             existing = next((s for s in self.db.all(conn, "sessions", owner_id=owner_id)
-                             if s["assignment_id"] == assignment["id"]), None)
+                             if s["assignment_id"] == assignment["id"] and
+                             (s.get("assignment") or {}).get("active_item_id") == assignment.get("active_item_id")), None)
             if existing:
                 return existing
             self.db.put(conn, "sessions", session["id"], session, owner_id=owner_id)
         return session
+
+    def prepare_item(self, session_id, owner_id):
+        """Refresh an unanswered item session created with another question's opening."""
+        with self.db.connect() as conn:
+            session = require_session(self.db, conn, session_id, owner_id)
+        item_id = session.get("assignment", {}).get("active_item_id")
+        if not item_id or session.get("opening_item_id") == item_id or any(
+                turn.get("kind") == "student" for turn in session.get("turns", [])):
+            return session
+        try:
+            plan = self.tutor.plan(session["assignment"])
+        except TutorError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        refreshed = copy.deepcopy(session)
+        refreshed.update(plan=plan.model_dump(), turns=[], support_events=[], assessment=None,
+                         pending_action=None, current_objective=None, done=False, step=0,
+                         hint_tier=0, opening_item_id=item_id)
+        response_turn(plan.opening, refreshed)
+        with self.db.connect(write=True) as conn:
+            current = require_session(self.db, conn, session_id, owner_id)
+            if current.get("version") != session.get("version") or any(
+                    turn.get("kind") == "student" for turn in current.get("turns", [])):
+                return current
+            refreshed["version"] += 1
+            refreshed["updated_at"] = timestamp()
+            self.db.put(conn, "sessions", session_id, refreshed, owner_id=owner_id)
+        return refreshed
 
     def mutate(self, session_id, body, action, owner_id):
         fingerprint = hashlib.sha256(json.dumps({"action": action, **body.model_dump()}, sort_keys=True).encode()).hexdigest()

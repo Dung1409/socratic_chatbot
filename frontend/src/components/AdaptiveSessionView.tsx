@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type Session } from "@/lib/api";
@@ -24,6 +25,7 @@ export function AdaptiveSessionView({
 }) {
   const { user } = useAuth();
   const client = useQueryClient();
+  const navigate = useNavigate();
   const draftKey = `socratic:${user?.id}:draft:${session.id}`;
   const essayKey = `socratic:${user?.id}:essay:${session.id}`;
   const pending = session.pending_action;
@@ -49,8 +51,9 @@ export function AdaptiveSessionView({
     if (blocked || itemId === session.assignment.active_item_id) return;
     setBusy(true);
     try {
-      saveSession(await api.selectSessionItem(session.id, itemId));
-      toast.success("Đã chuyển sang câu hỏi đã chọn");
+      const selected = await api.selectSessionItem(session.id, itemId);
+      client.setQueryData(["session", selected.id], selected);
+      await navigate({ to: "/phien-hoc", search: { session: selected.id } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không chuyển được câu hỏi");
     } finally {
@@ -125,7 +128,7 @@ export function AdaptiveSessionView({
   return (
     <SessionWorkspace
       session={session}
-      activity={busy}
+      activity={blocked}
       onSelectItem={(itemId) => void selectItem(itemId)}
       composer={
         !session.submitted ? (

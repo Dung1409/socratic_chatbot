@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type Session as SavedSession } from "@/lib/api";
@@ -19,6 +20,7 @@ export function TemplateSessionView({
   queryKey: string[];
 }) {
   const client = useQueryClient();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const draftKey = `socratic:${user?.id}:draft:${session.id}`;
   const essayKey = `socratic:${user?.id}:essay:${session.id}`;
@@ -95,6 +97,17 @@ export function TemplateSessionView({
     <SessionWorkspace
       session={session}
       activity={busy}
+      onSelectItem={(itemId) => {
+        if (busy || itemId === session.assignment.active_item_id) return;
+        setBusy(true);
+        void api.selectSessionItem(session.id, itemId)
+          .then(async (selected) => {
+            client.setQueryData(["session", selected.id], selected);
+            await navigate({ to: "/phien-hoc", search: { session: selected.id } });
+          })
+          .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Không chuyển được câu hỏi"))
+          .finally(() => setBusy(false));
+      }}
       composer={
         !submitted ? (
           <SessionComposer

@@ -11,7 +11,7 @@ export type Assignment = {
   excerpt?: string;
   status: string;
   progress: number;
-  task_type?: "reading" | "social";
+  task_type?: "reading" | "social" | "literary" | "other";
   source_text?: string;
   items?: AssignmentItem[];
   active_item_id?: string;
@@ -81,7 +81,7 @@ export type Session = {
   submitted_at?: string;
   tutor_mode: string;
   current_objective?: string;
-  plan?: { summary: string; objectives: string[]; task_type: "reading" | "social" };
+  plan?: { summary: string; objectives: string[]; task_type: "reading" | "social" | "literary" };
   support_events?: {
     id: string;
     turn_id: string;
@@ -359,6 +359,7 @@ export const api = {
   progress: () => request<Progress>("/progress"),
   sessions: () => request<Session[]>("/sessions"),
   session: (id: string) => request<Session>(`/sessions/${id}`),
+  prepareSession: (id: string) => post<Session>(`/sessions/${id}/prepare`, {}),
   start: (id: string) => post<Session>("/sessions", { assignment_id: id }),
   selectSessionItem: (sessionId: string, itemId: string) =>
     post<Session>(`/sessions/${sessionId}/select-item`, { item_id: itemId }),

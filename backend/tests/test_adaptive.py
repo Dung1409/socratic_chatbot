@@ -29,6 +29,82 @@ def answer(client, session):
     return response.json()
 
 
+def test_each_selected_question_has_its_own_opening_and_history(client, tutor):
+    original_plan = tutor.plan
+
+    def plan_for_item(assignment):
+        plan = original_plan(assignment)
+        plan.opening.text = f"Gợi mở: {assignment['prompt']}"
+        return plan
+
+    tutor.plan = plan_for_item
+    created = client.post("/api/learning/assignments", json={
+        "title": "Đề kiểm tra nhiều câu",
+        "items": [
+            {"item_type": "reading", "label": "Câu 1", "prompt": "Câu hỏi đọc hiểu đầu tiên?"},
+            {"item_type": "reading", "label": "Câu 2", "prompt": "Câu hỏi đọc hiểu thứ hai?"},
+        ],
+    })
+    assert created.status_code == 201, created.text
+    assignment = created.json()
+    first = start(client, assignment["id"])
+    assert first["assignment"]["active_item_id"] == assignment["items"][0]["id"]
+    assert first["turns"][0]["text"] == "Gợi mở: Câu hỏi đọc hiểu đầu tiên?"
+
+    second_response = client.post(f"/api/sessions/{first['id']}/select-item", json={
+        "item_id": assignment["items"][1]["id"],
+    })
+    assert second_response.status_code == 200, second_response.text
+    second = second_response.json()
+    assert second["id"] != first["id"]
+    assert second["assignment"]["active_item_id"] == assignment["items"][1]["id"]
+    assert second["turns"][0]["text"] == "Gợi mở: Câu hỏi đọc hiểu thứ hai?"
+    assert second["assignment"]["items"] == first["assignment"]["items"]
+
+    returned = client.post(f"/api/sessions/{second['id']}/select-item", json={
+        "item_id": assignment["items"][0]["id"],
+    })
+    assert returned.status_code == 200, returned.text
+    assert returned.json()["id"] == first["id"]
+    assert returned.json()["turns"][0]["text"] == first["turns"][0]["text"]
+
+
+def test_prepare_repairs_unanswered_session_with_previous_question_opening(client, tutor, database):
+    original_plan = tutor.plan
+
+    def plan_for_item(assignment):
+        plan = original_plan(assignment)
+        plan.opening.text = f"Gợi mở: {assignment['prompt']}"
+        return plan
+
+    tutor.plan = plan_for_item
+    created = client.post("/api/learning/assignments", json={
+        "title": "Đề đọc hiểu và văn học",
+        "items": [
+            {"item_type": "reading", "label": "Câu 1", "prompt": "Tìm bằng chứng trong đoạn văn?"},
+            {"item_type": "literary", "label": "Câu 2", "prompt": "Phân tích hình tượng trong bài thơ?"},
+        ],
+    }).json()
+    first = start(client, created["id"])
+    second = client.post(f"/api/sessions/{first['id']}/select-item", json={
+        "item_id": created["items"][1]["id"],
+    }).json()
+    with database.connect(write=True) as conn:
+        stale = database.get(conn, "sessions", second["id"], owner_id=client.user_id)
+        stale.pop("opening_item_id")
+        stale["turns"] = first["turns"]
+        stale["plan"] = first["plan"]
+        database.put(conn, "sessions", second["id"], stale, owner_id=client.user_id)
+
+    result = client.post(f"/api/sessions/{second['id']}/prepare")
+    assert result.status_code == 200, result.text
+    repaired = result.json()
+    assert repaired["id"] == second["id"]
+    assert repaired["assignment"]["active_item_id"] == created["items"][1]["id"]
+    assert repaired["plan"]["task_type"] == "literary"
+    assert repaired["turns"][0]["text"] == "Gợi mở: Phân tích hình tượng trong bài thơ?"
+
+
 def finish_and_submit(client, session, essay="Em kết luận cần phân tích dẫn chứng và kiểm tra phản đề trước khi khẳng định."):
     if not session["done"]:
         session = action(client, session, "finish").json()

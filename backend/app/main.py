@@ -354,9 +354,18 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             raise HTTPException(404, "Không tìm thấy tài liệu")
         return result
 
+    def item_assignment(base, item, items):
+        assignment = dict(base)
+        assignment.update(
+            prompt=item["prompt"], task_type=item["item_type"], active_item_id=item["id"],
+            items=[dict(entry) for entry in items],
+            source_text=item["context"] or base.get("source_text", ""),
+        )
+        return assignment
+
     @app.post("/api/sessions", tags=["Sessions"])
     def start_session(body: SessionInput, user: Principal = Depends(auth.current_user)):
-        with db.connect() as conn:
+        with db.connect(write=True) as conn:
             assignment = Database.get(conn, "assignments", body.assignment_id, owner_id=user.id)
             # Multi-question assignments live in the relational learning tables, while
             # the existing session UI still calls this legacy endpoint. Build a
@@ -380,32 +389,35 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             if assignment is None:
                 raise HTTPException(404, "Không tìm thấy dữ liệu")
             saved = [s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id]
-            ordered_items = db.execute(conn, """SELECT id FROM assignment_items
-                WHERE assignment_id=? ORDER BY item_order""", (body.assignment_id,)).fetchall()
+            ordered_items = db.execute(conn, """SELECT id, label, prompt, context, item_type
+                FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (body.assignment_id,)).fetchall()
             first_item_id = ordered_items[0]["id"] if ordered_items else None
             existing = next((s for s in saved
                              if not first_item_id or
                              (s.get("assignment") or {}).get("active_item_id") in {None, first_item_id}), None)
-            existing = existing or (saved[0] if saved else None)
+            existing = existing or (saved[0] if saved and not first_item_id else None)
+            if existing and ordered_items:
+                selected = next((entry for entry in ordered_items if entry["id"] ==
+                                 (existing.get("assignment") or {}).get("active_item_id")), ordered_items[0])
+                existing["assignment"] = item_assignment(existing["assignment"], selected, ordered_items)
+                db.put(conn, "sessions", existing["id"], existing, owner_id=user.id)
+            elif ordered_items:
+                assignment = item_assignment(assignment, ordered_items[0], ordered_items)
         if existing:
-            with db.connect() as conn:
-                items = db.execute(conn, """SELECT id, label, prompt, context, item_type
-                    FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
-                                   (body.assignment_id,)).fetchall()
-            if items:
-                existing["assignment"]["items"] = [dict(item) for item in items]
-                existing["assignment"].setdefault("active_item_id", items[0]["id"])
-                with db.connect(write=True) as write_conn:
-                    db.put(write_conn, "sessions", existing["id"], existing, owner_id=user.id)
-            return public_session(existing)
+            return public_session(adaptive.prepare_item(existing["id"], user.id)
+                                  if existing.get("tutor_mode") == "openai" else existing)
         if assignment.get("source") == "legacy_seed":
             raise HTTPException(404, "Hãy tải lên hoặc nhập đề riêng để bắt đầu tự học")
         if tutor_mode == "openai":
             return public_session(adaptive.start(assignment, user.id))
         with db.connect(write=True) as conn:
             assignment = require(conn, "assignments", body.assignment_id, user.id)
+            if ordered_items:
+                assignment = item_assignment(assignment, ordered_items[0], ordered_items)
             # Repeated starts (including a remount or double click) resume the saved session.
-            existing = next((s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id), None)
+            existing = next((s for s in saved_sessions(conn, user.id)
+                             if s["assignment_id"] == body.assignment_id and
+                             (s.get("assignment") or {}).get("active_item_id") == assignment.get("active_item_id")), None)
             if existing:
                 return public_session(existing)
             if assignment.get("source") == "legacy_seed":
@@ -423,42 +435,36 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     @app.post("/api/sessions/{session_id}/select-item", tags=["Sessions"])
     def select_session_item(session_id: str, body: SessionSelectItemInput,
                             user: Principal = Depends(auth.current_user)):
-        with db.connect(write=True) as conn:
+        with db.connect() as conn:
             session = require(conn, "sessions", session_id, user.id)
             assignment_id = session.get("assignment_id")
-            item = db.execute(conn, """SELECT id, label, prompt, context, item_type
-                FROM assignment_items WHERE id=? AND assignment_id=?""",
-                              (body.item_id, assignment_id)).fetchone()
-            all_items = [dict(row) for row in db.execute(conn, """SELECT id, label, prompt, context, item_type
-                FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (assignment_id,)).fetchall()]
+            all_items = db.execute(conn, """SELECT id, label, prompt, context, item_type
+                FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (assignment_id,)).fetchall()
+            item = next((entry for entry in all_items if entry["id"] == body.item_id), None)
             if item is None:
                 raise HTTPException(404, "Không tìm thấy câu hỏi đã chọn")
-            # Each selected question has an independent Socratic conversation.
-            # Reuse an existing item session when the learner comes back to it.
-            for candidate in saved_sessions(conn, user.id):
-                if candidate.get("assignment_id") == assignment_id and \
-                        (candidate.get("assignment") or {}).get("active_item_id") == item["id"]:
-                    candidate.setdefault("assignment", {})["items"] = all_items
-                    candidate["updated_at"] = now()
-                    db.put(conn, "sessions", candidate["id"], candidate, owner_id=user.id)
-                    return public_session(candidate)
-            assignment = dict(session.get("assignment") or {})
-            assignment["prompt"] = item["prompt"]
-            assignment["task_type"] = item["item_type"] if item["item_type"] in {"reading", "social"} else "social"
-            assignment["active_item_id"] = item["id"]
-            assignment["items"] = all_items
+            candidate = next((saved for saved in saved_sessions(conn, user.id)
+                              if saved.get("assignment_id") == assignment_id and
+                              (saved.get("assignment") or {}).get("active_item_id") == item["id"]), None)
+        if candidate:
+            with db.connect(write=True) as conn:
+                candidate = require(conn, "sessions", candidate["id"], user.id)
+                candidate["assignment"] = item_assignment(candidate["assignment"], item, all_items)
+                candidate["updated_at"] = now()
+                db.put(conn, "sessions", candidate["id"], candidate, owner_id=user.id)
+            return public_session(adaptive.prepare_item(candidate["id"], user.id)
+                                  if candidate.get("tutor_mode") == "openai" else candidate)
+        assignment = item_assignment(session["assignment"], item, all_items)
+        if session.get("tutor_mode") == "openai":
+            return public_session(adaptive.start(assignment, user.id))
+        with db.connect(write=True) as conn:
             steps = lesson_steps(assignment)
             selected_session = {
                 "id": str(uuid4()), "assignment_id": assignment_id, "assignment": assignment,
                 "steps": steps, "step": 0, "hint_tier": 0, "done": False, "submitted": False,
                 "essay": "", "turns": [tutor_turn(0, steps)], "version": 0, "requests": {},
-                "created_at": now(), "updated_at": now(), "tutor_mode": session.get("tutor_mode", "template"),
+                "created_at": now(), "updated_at": now(), "tutor_mode": "template",
             }
-            for key in ("model", "assessment_model", "policy_version", "scoring_version", "plan"):
-                if key in session:
-                    selected_session[key] = session[key]
-            if selected_session["tutor_mode"] == "openai":
-                selected_session.update({"support_events": [], "assessment": None, "pending_action": None})
             db.put(conn, "sessions", selected_session["id"], selected_session, owner_id=user.id)
             return public_session(selected_session)
 
@@ -471,6 +477,24 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def get_session(session_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
             return public_session(require(conn, "sessions", session_id, user.id))
+
+    @app.post("/api/sessions/{session_id}/prepare", tags=["Sessions"])
+    def prepare_session(session_id: str, user: Principal = Depends(auth.current_user)):
+        with db.connect(write=True) as conn:
+            session = require(conn, "sessions", session_id, user.id)
+            items = db.execute(conn, """SELECT id, label, prompt, context, item_type
+                FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
+                               (session["assignment_id"],)).fetchall()
+            if items:
+                active_id = (session.get("assignment") or {}).get("active_item_id") or items[0]["id"]
+                item = next((entry for entry in items if entry["id"] == active_id), items[0])
+                assignment = item_assignment(session["assignment"], item, items)
+                if session["assignment"] != assignment:
+                    session["assignment"] = assignment
+                    db.put(conn, "sessions", session_id, session, owner_id=user.id)
+        if session.get("tutor_mode") == "openai":
+            session = adaptive.prepare_item(session_id, user.id)
+        return public_session(session)
 
     def mutate(session_id, body, action, owner_id):
         with db.connect() as conn:

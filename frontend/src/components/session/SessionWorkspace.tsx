@@ -116,6 +116,8 @@ export function SessionWorkspace({ session, children, composer, activity = false
                     ? "Đọc hiểu"
                     : taskType === "social"
                       ? "Nghị luận xã hội"
+                      : taskType === "literary"
+                        ? "Nghị luận văn học"
                       : "Đề tự học"}
                   {assignment.grade ? ` · Lớp ${assignment.grade}` : ""}
                 </span>
@@ -154,6 +156,8 @@ export function SessionWorkspace({ session, children, composer, activity = false
                         ? "Đọc hiểu"
                         : taskType === "social"
                           ? "Nghị luận xã hội"
+                          : taskType === "literary"
+                            ? "Nghị luận văn học"
                           : "Đề tự học"}
                       {assignment.grade ? ` · Lớp ${assignment.grade}` : ""}
                     </SheetDescription>
@@ -205,6 +209,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
               <select
                 className="mt-1 block h-10 w-full rounded-md border bg-background px-3 text-sm font-normal text-foreground"
                 value={assignment.active_item_id ?? assignment.items[0]?.id}
+                disabled={activity}
                 onChange={(event) => onSelectItem(event.target.value)}
               >
                 {assignment.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}

@@ -40,6 +40,7 @@ function Page() {
   const [documentType, setDocumentType] = useState("reference_document");
   const [subject, setSubject] = useState("chưa xác định");
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [documentId, setDocumentId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const previews = useRef<string[]>([]);
   const documentInput = useRef<HTMLInputElement>(null);
@@ -67,6 +68,7 @@ function Page() {
       setFile(result.filename);
       setTitle(result.title);
       setText(result.text);
+      setDocumentId(result.document_id);
       setSourcePages(result.pages ?? null);
       setSourceWarnings(result.warnings ?? []);
       setContentBlocks(result.blocks ?? []);
@@ -94,6 +96,7 @@ function Page() {
       setImages(prepared);
       setFile(null);
       setText("");
+      setDocumentId(undefined);
       setStructure(null);
       setSourcePages(null);
       setSourceWarnings([]);
@@ -132,6 +135,7 @@ function Page() {
       if (!result) throw new Error("Máy chủ chưa trả về nội dung bộ ảnh.");
       setFile(`${images.length} ảnh theo thứ tự đã xác nhận`);
       setText(result.text);
+      setDocumentId(result.document_id);
       setSourcePages(result.pages ?? null);
       setSourceWarnings(result.warnings ?? []);
       setContentBlocks(result.blocks ?? []);
@@ -180,6 +184,8 @@ function Page() {
         title: title.trim(),
         prompt: prompt.trim(),
         target: 4,
+        source_text: text.trim(),
+        document_id: documentId,
       });
       await client.invalidateQueries({ queryKey: ["assignments"] });
       await navigate({ to: "/phien-hoc", search: { assignment: result.id } });

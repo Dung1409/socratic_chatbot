@@ -422,18 +422,32 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                               (body.item_id, assignment_id)).fetchone()
             if item is None:
                 raise HTTPException(404, "Không tìm thấy câu hỏi đã chọn")
+            # Each selected question has an independent Socratic conversation.
+            # Reuse an existing item session when the learner comes back to it.
+            for candidate in saved_sessions(conn, user.id):
+                if candidate.get("assignment_id") == assignment_id and \
+                        (candidate.get("assignment") or {}).get("active_item_id") == item["id"]:
+                    candidate["updated_at"] = now()
+                    db.put(conn, "sessions", candidate["id"], candidate, owner_id=user.id)
+                    return public_session(candidate)
             assignment = dict(session.get("assignment") or {})
             assignment["prompt"] = item["prompt"]
             assignment["task_type"] = item["item_type"] if item["item_type"] in {"reading", "social"} else "social"
             assignment["active_item_id"] = item["id"]
-            session["assignment"] = assignment
-            session["steps"] = lesson_steps(assignment)
-            session["step"] = 0
-            session["done"] = False
-            session["updated_at"] = now()
-            session["version"] += 1
-            db.put(conn, "sessions", session_id, session, owner_id=user.id)
-            return public_session(session)
+            steps = lesson_steps(assignment)
+            selected_session = {
+                "id": str(uuid4()), "assignment_id": assignment_id, "assignment": assignment,
+                "steps": steps, "step": 0, "hint_tier": 0, "done": False, "submitted": False,
+                "essay": "", "turns": [tutor_turn(0, steps)], "version": 0, "requests": {},
+                "created_at": now(), "updated_at": now(), "tutor_mode": session.get("tutor_mode", "template"),
+            }
+            for key in ("model", "assessment_model", "policy_version", "scoring_version", "plan"):
+                if key in session:
+                    selected_session[key] = session[key]
+            if selected_session["tutor_mode"] == "openai":
+                selected_session.update({"support_events": [], "assessment": None, "pending_action": None})
+            db.put(conn, "sessions", selected_session["id"], selected_session, owner_id=user.id)
+            return public_session(selected_session)
 
     @app.get("/api/sessions", tags=["Sessions"])
     def sessions(user: Principal = Depends(auth.current_user)):

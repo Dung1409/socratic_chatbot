@@ -1,8 +1,8 @@
-"""Optional Gemini transcription and layout cleanup for uploaded documents.
+"""Optional Gemini transcription, tags, and layout cleanup for uploads.
 
-The model only returns source text. Deterministic parsing still owns question
-boundaries, study contexts, and the confirmation step. No key or source bytes
-are logged or persisted by this module.
+Gemini returns clean source text plus provenance tags. Deterministic parsing
+still owns the final question boundaries and confirmation step. No key or
+source bytes are logged or persisted by this module.
 """
 
 import base64
@@ -14,6 +14,11 @@ from urllib.request import Request, urlopen
 
 MODEL = os.getenv("GEMINI_DOCUMENT_MODEL", "gemini-flash-latest")
 API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+TAG_INSTRUCTION = """
+Return clean text and structured tags in JSON. Never insert tag syntax into text.
+Each unit must include tags: [{"type":"section|question|subquestion|source|instruction|paragraph", "id":"stable-id", "label":"original label", "text":"exact tagged text"}].
+Tag every section heading, main question/request, sub-question, reading source, instruction line, and numbered paragraph. Keep original order and wording. Use stable IDs such as section-1, question-1, question-1-sub-1, source-1, paragraph-1. A tag may only refer to text present in its unit. Do not invent tags for unreadable text.
+"""
 MAX_UNIT_CHARS = 10_000
 MAX_BATCH_CHARS = 15_000
 MAX_BATCH_IMAGES = 3
@@ -81,8 +86,8 @@ def _batches(units):
         yield batch
 
 
-def _request(batch: list[dict]) -> tuple[dict[str, str], list[dict]]:
-    parts = [{"text": INSTRUCTION}]
+def _request(batch: list[dict]) -> tuple[dict[str, dict], list[dict]]:
+    parts = [{"text": INSTRUCTION + TAG_INSTRUCTION}]
     for unit in batch:
         parts.append({"text": f"Đơn vị {unit['id']} (trang/ảnh {unit['number']}):"})
         if "image" in unit:
@@ -106,9 +111,14 @@ def _request(batch: list[dict]) -> tuple[dict[str, str], list[dict]]:
             values = parsed["units"]
             if (not isinstance(values, list) or len(values) != len(batch)
                     or {item.get("id") for item in values} != expected
-                    or any(not isinstance(item.get("text"), str) for item in values)):
+                    or any(not isinstance(item.get("text"), str)
+                           or not isinstance(item.get("tags", []), list) for item in values)):
                 raise ValueError("Gemini returned incomplete document units")
-            return {item["id"]: item["text"].strip() for item in values}, parsed.get("uncertain", [])
+            return {item["id"]: {"text": item["text"].strip(),
+                                  "tags": [tag for tag in item.get("tags", [])
+                                           if isinstance(tag, dict) and tag.get("type")
+                                           and tag.get("id") and isinstance(tag.get("text", ""), str)]}
+                    for item in values}, parsed.get("uncertain", [])
         except HTTPError as exc:
             if attempt == 2 or exc.code not in {429, 500, 502, 503, 504}:
                 raise ValueError("Gemini document request failed") from exc
@@ -140,9 +150,21 @@ def improve_pages(pages: list[dict], images: dict[int, bytes] | None = None) -> 
     for page in pages:
         pieces = [unit for unit in _pieces([page], images) if unit["id"] in replacements]
         if pieces and all(unit["id"] in replacements for unit in _pieces([page], images)):
-            clean = "\n".join(replacements[unit["id"]] for unit in pieces if replacements[unit["id"]]).strip()
+            values = [replacements[unit["id"]] for unit in pieces]
+            clean = "\n".join(value["text"] if isinstance(value, dict) else value
+                                 for value in values
+                                 if (value["text"] if isinstance(value, dict) else value)).strip()
             if clean:
-                result.append({**page, "text": clean, "method": "gemini", "confidence": None})
+                tags = []
+                seen = set()
+                for unit in pieces:
+                    value = replacements[unit["id"]]
+                    for tag in value.get("tags", []) if isinstance(value, dict) else []:
+                        if tag["id"] not in seen:
+                            tags.append(tag)
+                            seen.add(tag["id"])
+                result.append({**page, "text": clean, "method": "gemini", "confidence": None,
+                               **({"tags": tags} if tags else {})})
                 continue
         result.append(page)
     if any(page["method"] == "gemini" for page in result):

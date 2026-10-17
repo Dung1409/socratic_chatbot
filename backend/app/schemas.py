@@ -23,6 +23,7 @@ class SourcePageInput(Input):
     text: str = Field(max_length=150000)
     method: str = Field(default="text", max_length=20)
     confidence: float | None = Field(default=None, ge=0, le=100)
+    tags: list[dict] | None = Field(default=None, max_length=200)
 
 
 class StructureInput(Input):

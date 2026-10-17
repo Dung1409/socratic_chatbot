@@ -245,7 +245,8 @@ export const authApi = {
 const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
-export type SourcePage = { number: number; label: string; text: string; method: string; confidence: number | null };
+export type SourceTag = { type: string; id: string; label?: string; text: string };
+export type SourcePage = { number: number; label: string; text: string; method: string; confidence: number | null; tags?: SourceTag[] };
 export type SourceParagraph = { id: string; text: string; source_pages: number[] };
 export type ParsedIdea = { id: string; label: string; text: string; context: string; source_pages: number[] };
 export type ParsedQuestion = {

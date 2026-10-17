@@ -185,10 +185,12 @@ function Page() {
     }
   };
   const selectQuestion = (question: ParsedQuestion) => {
+    setSelectedBlockId("");
     setSelectedId(question.id);
     setPrompt(question.context);
   };
   const selectIdea = (idea: ParsedQuestion["ideas"][number]) => {
+    setSelectedBlockId("");
     setSelectedId(idea.id);
     setPrompt(idea.context);
   };
@@ -376,7 +378,7 @@ function Page() {
                   <p key={`${index}-${warning}`} className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">{warning}</p>
                 ))}
                 {contentBlocks.length > 0 && (
-                  <details className="rounded-xl border bg-muted/20 p-4" open={documentType !== "exam"}>
+                  <details className="rounded-xl border bg-muted/20 p-4" open={documentType !== "exam" && !selectedBlockId}>
                     <summary className="cursor-pointer text-sm font-semibold">
                       Nội dung đã bóc tách ({contentBlocks.length} khối) · {documentType}
                     </summary>

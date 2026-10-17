@@ -10,6 +10,8 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DangKyRouteImport } from './routes/dang-ky'
+import { Route as DangNhapRouteImport } from './routes/dang-nhap'
 import { Route as DeBaiRouteImport } from './routes/de-bai'
 import { Route as PhienHocRouteImport } from './routes/phien-hoc'
 import { Route as TienTrinhRouteImport } from './routes/tien-trinh'
@@ -17,6 +19,16 @@ import { Route as TienTrinhRouteImport } from './routes/tien-trinh'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DangKyRoute = DangKyRouteImport.update({
+  id: '/dang-ky',
+  path: '/dang-ky',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DangNhapRoute = DangNhapRouteImport.update({
+  id: '/dang-nhap',
+  path: '/dang-nhap',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeBaiRoute = DeBaiRouteImport.update({
@@ -37,12 +49,16 @@ const TienTrinhRoute = TienTrinhRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/dang-ky': typeof DangKyRoute
+  '/dang-nhap': typeof DangNhapRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/dang-ky': typeof DangKyRoute
+  '/dang-nhap': typeof DangNhapRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
@@ -50,20 +66,32 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/dang-ky': typeof DangKyRoute
+  '/dang-nhap': typeof DangNhapRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
+  fullPaths:
+    '/' | '/dang-ky' | '/dang-nhap' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
-  id: '__root__' | '/' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
+  to: '/' | '/dang-ky' | '/dang-nhap' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
+  id:
+    | '__root__'
+    | '/'
+    | '/dang-ky'
+    | '/dang-nhap'
+    | '/de-bai'
+    | '/phien-hoc'
+    | '/tien-trinh'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DangKyRoute: typeof DangKyRoute
+  DangNhapRoute: typeof DangNhapRoute
   DeBaiRoute: typeof DeBaiRoute
   PhienHocRoute: typeof PhienHocRoute
   TienTrinhRoute: typeof TienTrinhRoute
@@ -76,6 +104,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dang-ky': {
+      id: '/dang-ky'
+      path: '/dang-ky'
+      fullPath: '/dang-ky'
+      preLoaderRoute: typeof DangKyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dang-nhap': {
+      id: '/dang-nhap'
+      path: '/dang-nhap'
+      fullPath: '/dang-nhap'
+      preLoaderRoute: typeof DangNhapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/de-bai': {
@@ -104,6 +146,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DangKyRoute: DangKyRoute,
+  DangNhapRoute: DangNhapRoute,
   DeBaiRoute: DeBaiRoute,
   PhienHocRoute: PhienHocRoute,
   TienTrinhRoute: TienTrinhRoute,

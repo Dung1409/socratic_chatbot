@@ -10,8 +10,9 @@ from backend.app.main import create_app
 
 
 @pytest.fixture
-def client(database):
+def client(database, authorize):
     with TestClient(create_app(database.path)) as c:
+        authorize(c)
         yield c
 
 
@@ -105,12 +106,14 @@ def test_concurrent_messages_do_not_overwrite_turns(client):
     assert len([turn for turn in saved["turns"] if turn["kind"] == "student"]) == 1
 
 
-def test_persistence_across_restart(tmp_path):
+def test_persistence_across_restart(tmp_path, authorize):
     path = str(tmp_path / "persistent.db")
     with TestClient(create_app(path)) as first:
+        authorize(first)
         session = start(first)
         session = action(first, session, "messages", text="Em đang tìm hiểu yêu cầu đề bài.").json()
     with TestClient(create_app(path)) as second:
+        authorize(second)
         assert second.get(f"/api/sessions/{session['id']}").json() == session
         assert len(second.get("/api/assignments").json()) == 1
         assert start(second, session["assignment_id"])["id"] == session["id"]

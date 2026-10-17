@@ -10,6 +10,9 @@ import {
   GraduationCap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/AuthProvider";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const studentNav = [
   { to: "/", label: "Tổng quan", icon: LayoutDashboard },
@@ -21,6 +24,8 @@ const studentNav = [
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const auth = useAuth();
 
   const NavGroup = ({
     title,
@@ -84,14 +89,37 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className="flex-1 overflow-y-auto p-3 pt-5">
           <NavGroup title="Không gian tự học" items={studentNav} />
         </nav>
-        <div className="border-t p-4 flex items-center gap-3">
-          <div className="h-9 w-9 rounded-full grid place-items-center text-xs font-semibold bg-primary-soft text-primary">
-            HS
+        <div className="border-t p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 shrink-0 rounded-full grid place-items-center text-xs font-semibold bg-primary-soft text-primary">
+              {auth.user?.display_name.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="text-sm leading-tight min-w-0">
+              <p className="font-medium truncate">{auth.user?.display_name}</p>
+              <p className="text-xs text-muted-foreground truncate">{auth.user?.email}</p>
+            </div>
           </div>
-          <div className="text-sm leading-tight">
-            <p className="font-medium">Không gian của bạn</p>
-            <p className="text-xs text-muted-foreground">Tự học Ngữ văn</p>
-          </div>
+          <Button
+            className="w-full"
+            size="sm"
+            variant="outline"
+            disabled={signingOut}
+            onClick={() => {
+              setSigningOut(true);
+              void auth
+                .logout()
+                .catch((error: unknown) => {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Chưa đăng xuất được. Vui lòng thử lại.",
+                  );
+                })
+                .finally(() => setSigningOut(false));
+            }}
+          >
+            {signingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+          </Button>
         </div>
       </aside>
       {open && (

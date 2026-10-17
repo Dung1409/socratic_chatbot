@@ -15,10 +15,11 @@ def queue(database, tmp_path):
     return JobQueue(database, tmp_path / "uploads")
 
 
-def test_background_upload_survives_api_restart(database, tmp_path, monkeypatch):
+def test_background_upload_survives_api_restart(database, tmp_path, monkeypatch, authorize):
     monkeypatch.setenv("BACKGROUND_JOBS", "true")
     storage = tmp_path / "uploads"
     with TestClient(create_app(database.path, storage_path=storage)) as api:
+        authorize(api)
         assert api.get("/api/ready").json()["background_jobs"] is True
         response = api.post("/api/uploads/extract", files={"file": ("de-bai.txt", TEXT.encode(), "text/plain")})
         assert response.status_code == 202
@@ -28,6 +29,7 @@ def test_background_upload_survives_api_restart(database, tmp_path, monkeypatch)
     # A new queue and API instance recover the persisted job and original file.
     assert process_one(JobQueue(database, storage))
     with TestClient(create_app(database.path, storage_path=storage)) as api:
+        authorize(api)
         result = api.get(f"/api/documents/{document_id}").json()
         assert result["status"] == "needs_review"
         assert result["text"] == TEXT
@@ -41,10 +43,11 @@ def test_background_upload_survives_api_restart(database, tmp_path, monkeypatch)
         assert confirmed.json()["source"] == "student"
 
 
-def test_cannot_confirm_a_document_before_worker_finishes(database, tmp_path):
+def test_cannot_confirm_a_document_before_worker_finishes(database, tmp_path, authorize):
     storage = tmp_path / "uploads"
-    pending = JobQueue(database, storage).submit("de.txt", TEXT.encode())
     with TestClient(create_app(database.path, storage_path=storage)) as api:
+        authorize(api)
+        pending = JobQueue(database, storage).submit("de.txt", TEXT.encode(), owner_id=api.user_id)
         body = {"title": "Đề chưa trích xuất", "prompt": TEXT, "document_id": pending["document_id"]}
         assert api.post("/api/assignments", json=body).status_code == 409
         body["document_id"] = "missing"

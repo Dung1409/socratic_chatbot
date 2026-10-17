@@ -1,9 +1,64 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, request, type Session } from "@/lib/api";
+import { api, authApi, ApiError, clearAuthState, request, type Session } from "@/lib/api";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  clearAuthState();
+  vi.unstubAllGlobals();
+});
 
 describe("FastAPI client", () => {
+  it("sends cookies and a session-bound CSRF header without an Authorization bearer token", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            user: { id: "user", email: "user@example.com", display_name: "User" },
+            csrf_token: "csrf-one",
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([])));
+    vi.stubGlobal("fetch", fetch);
+    await authApi.login("user@example.com", "password");
+    await api.createAssignment({
+      title: "Đề riêng",
+      prompt: "Nội dung đề đủ dài để luyện tập.",
+      target: 4,
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/assignments",
+      expect.objectContaining({
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": "csrf-one" },
+      }),
+    );
+  });
+  it("refreshes expired access cookies and retries the original request once", async () => {
+    const auth = {
+      user: { id: "one", email: "one@example.com", display_name: "One" },
+      csrf_token: "new-csrf",
+    };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "expired" }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "expired" }), { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf_token: "new-csrf" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify(auth)))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "private" }])));
+    vi.stubGlobal("fetch", fetch);
+    await expect(api.assignments()).resolves.toEqual([{ id: "private" }]);
+    expect(fetch).toHaveBeenNthCalledWith(
+      4,
+      "/api/auth/refresh",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": "new-csrf" },
+      }),
+    );
+    expect(fetch).toHaveBeenCalledTimes(5);
+  });
   it("waits for the background worker before returning extracted text", async () => {
     const extracted = { filename: "de.txt", title: "de", text: "Nội dung đề bài đủ dài." };
     const fetch = vi

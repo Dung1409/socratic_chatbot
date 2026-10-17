@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from .db import Database
 from .auth import AuthService, Principal, UNSAFE_METHODS, auth_router
-from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, validate_upload
+from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, extract_image_batch, validate_upload
 from .structure import structure_text
 from .jobs import JobQueue
 from .schemas import AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput
@@ -145,9 +145,18 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         """Extract several pages/images in submitted order without merging them blindly."""
         if not files:
             raise HTTPException(422, "Cần tải lên ít nhất một tệp")
+        uploads = [read_upload(file) for file in files]
+        if all(Path(filename).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+               for filename, _ in uploads):
+            try:
+                extracted = extract_image_batch(uploads)
+            except ExtractionError as exc:
+                raise HTTPException(exc.status_code, str(exc)) from exc
+            return {"combined": {"filename": f"{len(uploads)} ảnh", "title": "Tài liệu từ ảnh",
+                                  **extracted, "structure": structure_text(extracted["text"], extracted["pages"])},
+                    "needs_confirmation": True}
         documents = []
-        for sequence, file in enumerate(files, start=1):
-            filename, data = read_upload(file)
+        for sequence, (filename, data) in enumerate(uploads, start=1):
             try:
                 extracted = extract_document(filename, data)
             except ExtractionError as exc:

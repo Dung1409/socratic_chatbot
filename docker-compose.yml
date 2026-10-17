@@ -2,7 +2,7 @@ x-backend: &backend
   build:
     context: ./backend
     dockerfile: Dockerfile
-  environment:
+  environment: &backend_environment
     PGHOST: postgres
     PGPORT: "5432"
     PGDATABASE: ${POSTGRES_DB:-socratic}
@@ -49,6 +49,10 @@ services:
 
   backend:
     <<: *backend
+    environment:
+      <<: *backend_environment
+      GG_API_KEY: ${GG_API_KEY:-}
+      GEMINI_DOCUMENT_MODEL: ${GEMINI_DOCUMENT_MODEL:-gemini-flash-latest}
     ports:
       - "127.0.0.1:${BE_PORT:-8000}:8000"
     depends_on:
@@ -60,6 +64,10 @@ services:
 
   worker:
     <<: *backend
+    environment:
+      <<: *backend_environment
+      GG_API_KEY: ${GG_API_KEY:-}
+      GEMINI_DOCUMENT_MODEL: ${GEMINI_DOCUMENT_MODEL:-gemini-flash-latest}
     command: ["python", "-m", "backend.app.worker"]
     depends_on:
       postgres:

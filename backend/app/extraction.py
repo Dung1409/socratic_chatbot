@@ -1,7 +1,8 @@
 """Read student documents into ordered, reviewable source units.
 
-OCR is local: Tesseract must be installed with Vietnamese language data. The
-original upload is retained by the job queue; extraction never sends it to AI.
+When configured, Gemini reads image pages and normalizes extracted text.
+Tesseract remains the local fallback. The original upload is retained by the
+job queue; only the configured external provider receives document content.
 """
 
 import io
@@ -243,7 +244,13 @@ def _ocr_image(image) -> tuple[str, float | None]:
     return "\n".join(lines).strip(), round(sum(scores) / len(scores), 1) if scores else None
 
 
-def _pdf_pages(data: bytes):
+def _jpeg_bytes(image) -> bytes:
+    output = io.BytesIO()
+    image.convert("RGB").save(output, format="JPEG", quality=85, optimize=True)
+    return output.getvalue()
+
+
+def _pdf_pages(data: bytes, source_images: dict[int, bytes] | None = None):
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
@@ -264,7 +271,11 @@ def _pdf_pages(data: bytes):
                 image = rendered[index].render(scale=2).to_pil()
                 if image.width * image.height > MAX_IMAGE_PIXELS:
                     raise ExtractionError(f"Trang {index + 1} quá lớn để OCR")
-                text, confidence = _ocr_image(image)
+                if source_images is not None:
+                    source_images[index + 1] = _jpeg_bytes(image)
+                    text, confidence = "", None
+                else:
+                    text, confidence = _ocr_image(image)
                 method = "ocr"
             pages.append({"number": index + 1, "label": f"Trang {index + 1}", "text": text,
                           "method": method, "confidence": confidence})
@@ -447,17 +458,72 @@ def _content_blocks(pages: list[dict]) -> list[dict]:
     return blocks
 
 
+def _finalize_pages(filename: str, pages: list[dict], source_images: dict[int, bytes] | None) -> dict:
+    from .gemini import improve_pages
+
+    pages, gemini_warnings = improve_pages(pages, source_images)
+    if source_images:
+        for page in pages:
+            if page["text"] or page["number"] not in source_images:
+                continue
+            try:
+                page["text"], page["confidence"] = _ocr_image(_image(source_images[page["number"]]))
+                page["method"] = "ocr"
+                gemini_warnings.append(f"{page['label']}: đã dùng OCR cục bộ vì Gemini không đọc được trang này.")
+            except ExtractionError:
+                pass
+    text = "\n\n".join(page["text"] for page in pages if page["text"]).strip()
+    if len(text) < 15:
+        raise ExtractionError("Không nhận diện đủ chữ; hãy dùng ảnh rõ hơn hoặc nhập nội dung trực tiếp.")
+    if len(text) > MAX_TEXT_CHARS:
+        raise ExtractionError("Nội dung vượt quá 150.000 ký tự; hãy chia tài liệu thành nhiều bộ đề.")
+    warnings = [*gemini_warnings, *[f"{page['label']} không đọc được chữ; cần kiểm tra bản gốc."
+                                 for page in pages if not page["text"]]]
+    if any(page["method"] == "ocr" for page in pages):
+        warnings.append("OCR có thể sai dù điểm tin cậy cao; hãy đối chiếu các số liệu và chữ quan trọng với bản gốc.")
+    warnings.extend(f"{page['label']} OCR chưa chắc chắn; cần xem lại chữ."
+                    for page in pages if page["confidence"] is not None and page["confidence"] < 65)
+    return {"text": text, "pages": pages, "blocks": _content_blocks(pages),
+            "warnings": warnings, "document_type": classify_document(text, filename),
+            "subject": detect_subject(text, filename)}
+
+
+def extract_image_batch(files: list[tuple[str, bytes]]) -> dict:
+    """Read an ordered set of uploaded images as one document."""
+    if not files or len(files) > 12:
+        raise ExtractionError("Cần từ 1 đến 12 ảnh trong một tài liệu.")
+    from .gemini import enabled as gemini_enabled
+
+    source_images = {} if gemini_enabled() else None
+    pages = []
+    for number, (filename, data) in enumerate(files, start=1):
+        validate_upload(filename, data)
+        if Path(filename).suffix.lower() not in IMAGE_SUFFIXES:
+            raise ExtractionError("Bộ ảnh chỉ nhận PNG, JPG/JPEG hoặc WEBP.", 415)
+        image = _image(data)
+        if source_images is not None:
+            source_images[number] = _jpeg_bytes(image)
+            text, confidence = "", None
+        else:
+            text, confidence = _ocr_image(image)
+        pages.append({"number": number, "label": f"Ảnh {number}: {filename}", "text": text,
+                      "method": "ocr", "confidence": confidence})
+    return _finalize_pages("bộ ảnh", pages, source_images)
+
+
 def extract_document(filename: str, data: bytes) -> dict:
     """Return text and ordered units; never silently discard an unreadable page."""
     validate_upload(filename, data)
     suffix = Path(filename).suffix.lower()
+    from .gemini import enabled as gemini_enabled
+    source_images = {} if gemini_enabled() else None
     try:
         if suffix in TEXT_DOCUMENT_SUFFIXES:
             text = _rich_text(data, suffix)
             pages = [{"number": 1, "label": f"Tệp {suffix[1:].upper()}", "text": text.strip(),
                       "method": "text", "confidence": None}]
         elif suffix == ".pdf":
-            pages = _pdf_pages(data)
+            pages = _pdf_pages(data, source_images)
         elif suffix == ".docx":
             pages = _docx_pages(data)
         elif suffix == ".doc":
@@ -467,23 +533,15 @@ def extract_document(filename: str, data: bytes) -> dict:
             pages = [{"number": 1, "label": "Tệp ODT", "text": text.strip(),
                       "method": "text", "confidence": None}]
         else:
-            text, confidence = _ocr_image(_image(data))
+            image = _image(data)
+            if source_images is not None:
+                source_images[1] = _jpeg_bytes(image)
+                text, confidence = "", None
+            else:
+                text, confidence = _ocr_image(image)
             pages = [{"number": 1, "label": "Ảnh 1", "text": text,
                       "method": "ocr", "confidence": confidence}]
-        text = "\n\n".join(page["text"] for page in pages if page["text"]).strip()
-        if len(text) < 15:
-            raise ExtractionError("Không nhận diện đủ chữ; hãy dùng ảnh rõ hơn hoặc nhập nội dung trực tiếp.")
-        if len(text) > MAX_TEXT_CHARS:
-            raise ExtractionError("Nội dung vượt quá 150.000 ký tự; hãy chia tài liệu thành nhiều bộ đề.")
-        warnings = [f"{page['label']} không đọc được chữ; cần kiểm tra bản gốc."
-                    for page in pages if not page["text"]]
-        if any(page["method"] == "ocr" for page in pages):
-            warnings.append("OCR đã tự chuẩn hóa ảnh; chỉ cần kiểm tra các trang được đánh dấu chưa chắc chắn, không cần đọc lại toàn bộ tài liệu.")
-        warnings.extend(f"{page['label']} OCR chưa chắc chắn; cần xem lại chữ."
-                        for page in pages if page["confidence"] is not None and page["confidence"] < 65)
-        return {"text": text, "pages": pages, "blocks": _content_blocks(pages),
-                "warnings": warnings, "document_type": classify_document(text, filename),
-                "subject": detect_subject(text, filename)}
+        return _finalize_pages(filename, pages, source_images)
     except ExtractionError:
         raise
     except Exception as exc:

@@ -252,7 +252,7 @@ export const api = {
       body: data,
     });
     if ("text" in result) return result;
-    for (let attempt = 0; attempt < 240; attempt++) {
+    for (let attempt = 0; attempt < 1800; attempt++) {
       const document = await request<DocumentStatus>(`/documents/${result.document_id}`);
       if (document.status === "needs_review" && document.text !== null) {
         return { filename: document.filename, title: document.title, text: document.text,
@@ -274,7 +274,7 @@ export const api = {
   extractBatch: (files: File[]) => {
     const data = new FormData();
     files.forEach((file) => data.append("files", file));
-    return request<{ documents: ExtractedDocument[]; warnings: string[]; needs_confirmation: boolean }>(
+    return request<{ combined?: ExtractedDocument; documents?: ExtractedDocument[]; warnings?: string[]; needs_confirmation: boolean }>(
       "/uploads/extract-batch", { method: "POST", body: data },
     );
   },

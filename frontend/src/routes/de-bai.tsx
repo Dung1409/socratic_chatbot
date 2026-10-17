@@ -40,7 +40,6 @@ function Page() {
   const [documentType, setDocumentType] = useState("reference_document");
   const [subject, setSubject] = useState("chưa xác định");
   const [images, setImages] = useState<ImageItem[]>([]);
-  const [imageCache, setImageCache] = useState<Record<string, SourcePage>>({});
   const [busy, setBusy] = useState(false);
   const previews = useRef<string[]>([]);
   const documentInput = useRef<HTMLInputElement>(null);
@@ -93,7 +92,6 @@ function Page() {
         preview: URL.createObjectURL(item) }));
       previews.current = prepared.map((item) => item.preview);
       setImages(prepared);
-      setImageCache({});
       setFile(null);
       setText("");
       setStructure(null);
@@ -128,40 +126,19 @@ function Page() {
   const processImages = async () => {
     if (busy || !images.length) return;
     setBusy(true);
-    const cache = { ...imageCache };
     try {
-      const pages: SourcePage[] = [];
-      const warnings: string[] = [];
-      for (const [index, item] of images.entries()) {
-        let page = cache[item.id];
-        if (!page) {
-          const result = await api.extract(item.file).catch((error: unknown) => {
-            throw new Error(`Ảnh ${index + 1} (${item.file.name}): ${error instanceof Error ? error.message : "không đọc được"}`);
-          });
-          page = result.pages?.[0] ?? { number: 1, label: item.file.name, text: result.text,
-            method: "ocr", confidence: null };
-          cache[item.id] = page;
-          setImageCache({ ...cache });
-        }
-        if (page.confidence !== null && page.confidence < 65) {
-          warnings.push(`Ảnh ${index + 1} OCR chưa chắc chắn; cần xem lại chữ.`);
-        }
-        pages.push({ ...page, number: index + 1, label: `Ảnh ${index + 1}: ${item.file.name}` });
-      }
-      const combined = pages.map((page) => page.text).join("\n\n");
-      const parsed = await api.structure(combined, pages);
+      const batch = await api.extractBatch(images.map((item) => item.file));
+      const result = batch.combined;
+      if (!result) throw new Error("Máy chủ chưa trả về nội dung bộ ảnh.");
       setFile(`${images.length} ảnh theo thứ tự đã xác nhận`);
-      setText(combined);
-      setSourcePages(pages);
-      setSourceWarnings(warnings);
-      setContentBlocks(pages.flatMap((page) => page.text.trim() ? [{
-        id: `page-${page.number}`, type: "paragraph", text: page.text,
-        page: page.number, method: page.method,
-      }] : []));
+      setText(result.text);
+      setSourcePages(result.pages ?? null);
+      setSourceWarnings(result.warnings ?? []);
+      setContentBlocks(result.blocks ?? []);
       setSelectedBlockId("");
-      setDocumentType("image_note");
-      setSubject("chưa xác định");
-      applyStructure(parsed);
+      setDocumentType(result.document_type ?? "image_note");
+      setSubject(result.subject ?? "chưa xác định");
+      applyStructure(result.structure ?? await api.structure(result.text, result.pages));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không đọc được bộ ảnh");
     } finally {
@@ -545,8 +522,8 @@ function Page() {
             </Button>
           </form>
           <div className="mt-6 text-xs text-muted-foreground leading-relaxed">
-            Hệ thống đọc PDF scan/ảnh bằng OCR khi máy chủ đã cài Tesseract tiếng Việt.
-            Em cần kiểm tra lại chữ, thứ tự và ranh giới câu/ý trước khi xác nhận. Gia sư hiện dùng kịch bản, chưa gọi AI.
+            Khi Gemini được cấu hình, nội dung tệp và ảnh sẽ được gửi tới Google để đọc và sắp xếp; nếu không, hệ thống dùng OCR cục bộ.
+            Em cần kiểm tra chữ, thứ tự và ranh giới câu/ý trước khi xác nhận. Gia sư đối thoại hiện vẫn dùng kịch bản.
           </div>
         </Panel>
         <div className="xl:col-span-3 space-y-4">

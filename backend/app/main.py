@@ -379,7 +379,14 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                     Database.put(conn, "assignments", body.assignment_id, assignment, user.id)
             if assignment is None:
                 raise HTTPException(404, "Không tìm thấy dữ liệu")
-            existing = next((s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id), None)
+            saved = [s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id]
+            ordered_items = db.execute(conn, """SELECT id FROM assignment_items
+                WHERE assignment_id=? ORDER BY item_order""", (body.assignment_id,)).fetchall()
+            first_item_id = ordered_items[0]["id"] if ordered_items else None
+            existing = next((s for s in saved
+                             if not first_item_id or
+                             (s.get("assignment") or {}).get("active_item_id") in {None, first_item_id}), None)
+            existing = existing or (saved[0] if saved else None)
         if existing:
             with db.connect() as conn:
                 items = db.execute(conn, """SELECT id, label, prompt, context, item_type
@@ -388,6 +395,8 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             if items:
                 existing["assignment"]["items"] = [dict(item) for item in items]
                 existing["assignment"].setdefault("active_item_id", items[0]["id"])
+                with db.connect(write=True) as write_conn:
+                    db.put(write_conn, "sessions", existing["id"], existing, owner_id=user.id)
             return public_session(existing)
         if assignment.get("source") == "legacy_seed":
             raise HTTPException(404, "Hãy tải lên hoặc nhập đề riêng để bắt đầu tự học")

@@ -3,15 +3,11 @@ export type Assignment = {
   title: string;
   prompt: string;
   target: number;
-  due: string;
-  author: string;
-  grade: string;
-  excerpt: string;
+  document_id: string | null;
+  source: string;
   status: string;
   progress: number;
 };
-export type Criterion = { id: string; name: string; weight: number; desc: string };
-export type Rubric = { version: number; criteria: Criterion[] };
 export type Step = { level: number; q: string; hints: string[] };
 export type Turn =
   | { kind: "tutor"; step: number; text: string; level: number }
@@ -24,15 +20,6 @@ export type Turn =
       quality: number | null;
       hints: number;
     };
-export type Review = {
-  id: string;
-  session_id: string;
-  scores: Record<string, number>;
-  feedback: string;
-  total: number;
-  created_at: string;
-  rubric_version: number;
-};
 export type Session = {
   id: string;
   assignment_id: string;
@@ -45,15 +32,10 @@ export type Session = {
   essay: string;
   turns: Turn[];
   version: number;
-  rubric: Rubric;
   created_at: string;
   updated_at: string;
   submitted_at?: string;
-  student_name: string;
-  student_id: string;
-  class_name: string;
   tutor_mode: string;
-  review: Review | null;
 };
 export type Dashboard = {
   sessions: number;
@@ -61,32 +43,21 @@ export type Dashboard = {
   hints: number;
   hints_per_answer: number;
   submitted: number;
-  pending: number;
   latest_session: Session | null;
-  latest_review: Review | null;
 };
 export type Progress = {
-  series: { week: string; score: number }[];
   bloom_profile: { skill: string; value: number }[];
-  latest: Session | null;
-  pending: number;
+  sessions: Session[];
 };
-export type Student = {
-  id: string;
-  name: string;
-  cls: string;
-  sessions: number;
-  bloom: number | null;
-  score: number | null;
-  trend: string;
-  hints: number;
-};
-export type Overview = {
-  students: Student[];
-  sessions: number;
-  pending: number;
-  distribution: { b: string; n: number }[];
-};
+
+export type AuthUser = { id: string; email: string; display_name: string };
+export type AuthSession = { user: AuthUser; csrf_token: string };
+let csrfToken: string | null = null;
+let refreshPromise: Promise<AuthSession> | null = null;
+
+export function clearAuthState() {
+  csrfToken = null;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -97,14 +68,18 @@ export class ApiError extends Error {
   }
 }
 
-export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function send(path: string, options?: RequestInit): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`${import.meta.env["VITE_API_URL"] || ""}/api${path}`, {
       ...options,
+      credentials: "include",
       headers: {
         ...(options?.body && !(options.body instanceof FormData)
           ? { "Content-Type": "application/json" }
+          : {}),
+        ...(csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(options?.method ?? "GET")
+          ? { "X-CSRF-Token": csrfToken }
           : {}),
         ...options?.headers,
       },
@@ -112,6 +87,10 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   } catch {
     throw new ApiError("Không kết nối được backend. Kiểm tra FastAPI đang chạy ở cổng 8000.", 0);
   }
+  return response;
+}
+
+async function parse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const data = await response.json().catch(() => null);
     const detail = data?.detail;
@@ -126,43 +105,102 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   }
   return response.json() as Promise<T>;
 }
+
+async function raw<T>(path: string, options?: RequestInit): Promise<T> {
+  return parse<T>(await send(path, options));
+}
+
+function remember(session: AuthSession) {
+  csrfToken = session.csrf_token;
+  return session;
+}
+
+async function refreshSession(): Promise<AuthSession> {
+  if (!refreshPromise) {
+    const renew = async () => {
+      // Recheck after obtaining the cross-tab lock: another tab may have refreshed.
+      try {
+        return remember(await raw<AuthSession>("/auth/me"));
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      }
+      const csrf = await raw<{ csrf_token: string }>("/auth/csrf");
+      csrfToken = csrf.csrf_token;
+      return remember(await raw<AuthSession>("/auth/refresh", { method: "POST" }));
+    };
+    refreshPromise = (async (): Promise<AuthSession> => {
+      if (typeof navigator !== "undefined" && navigator.locks)
+        return await navigator.locks.request("socratic-auth-refresh", renew);
+      return await renew();
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  let response = await send(path, options);
+  if (response.status === 401) {
+    try {
+      await refreshSession();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        clearAuthState();
+        window.dispatchEvent(new Event("socratic:logged-out"));
+      }
+      throw error;
+    }
+    response = await send(path, options);
+    if (response.status === 401) {
+      clearAuthState();
+      window.dispatchEvent(new Event("socratic:logged-out"));
+    }
+  }
+  return parse<T>(response);
+}
+
+export const authApi = {
+  session: async () => {
+    try {
+      return await refreshSession();
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        clearAuthState();
+        return null;
+      }
+      throw error;
+    }
+  },
+  login: async (email: string, password: string) =>
+    remember(
+      await raw<AuthSession>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      }),
+    ),
+  register: async (display_name: string, email: string, password: string) =>
+    remember(
+      await raw<AuthSession>("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ display_name, email, password }),
+      }),
+    ),
+  logout: async () => {
+    await raw("/auth/logout", { method: "POST" });
+    clearAuthState();
+  },
+};
 const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
-export type SourcePage = { number: number; label: string; text: string; method: string; confidence: number | null };
-export type SourceParagraph = { id: string; text: string; source_pages: number[] };
-export type ParsedIdea = { id: string; label: string; text: string; context: string; source_pages: number[] };
-export type ParsedQuestion = {
-  id: string; label: string; text: string; stem: string; context: string;
-  task?: string; materials?: string;
-  points?: string | null; source_selection?: "full_source" | "cited_paragraphs" | "matched_phrase";
-  subquestions: string[]; ideas: ParsedIdea[];
-  source_pages: number[]; paragraphs: SourceParagraph[];
-};
-export type ParsedPart = {
-  id: string; title: string; context: string; source_pages: number[];
-  paragraphs: SourceParagraph[]; questions: ParsedQuestion[];
-};
-export type DocumentStructure = {
-  global_context: string;
-  global_paragraphs: SourceParagraph[];
-  parts: ParsedPart[];
-  excluded: { text: string; page: number | null; reason: string }[];
-  warnings: string[];
-};
-type ExtractedDocument = {
-  filename: string; title: string; text: string; structure?: DocumentStructure;
-  pages?: SourcePage[]; warnings?: string[];
-};
+type ExtractedDocument = { filename: string; title: string; text: string; document_id?: string };
 type PendingDocument = { document_id: string; job_id: string; status: string };
 type DocumentStatus = PendingDocument & {
   filename: string;
   title: string;
   text: string | null;
   error: string | null;
-  structure?: DocumentStructure | null;
-  pages?: SourcePage[];
-  extraction_warnings?: string[];
 };
 
 export const api = {
@@ -171,8 +209,7 @@ export const api = {
     title: string;
     prompt: string;
     target: number;
-    due?: string;
-    excerpt?: string;
+    document_id?: string;
   }) => post<Assignment>("/assignments", body),
   extract: async (file: File): Promise<ExtractedDocument> => {
     const data = new FormData();
@@ -181,14 +218,16 @@ export const api = {
       method: "POST",
       body: data,
     });
-    if (!("document_id" in result)) return result;
+    if ("text" in result) return result;
     for (let attempt = 0; attempt < 240; attempt++) {
       const document = await request<DocumentStatus>(`/documents/${result.document_id}`);
       if (document.status === "needs_review" && document.text !== null) {
-        return { filename: document.filename, title: document.title, text: document.text,
-          ...(document.structure ? { structure: document.structure } : {}),
-          ...(document.pages ? { pages: document.pages } : {}),
-          ...(document.extraction_warnings ? { warnings: document.extraction_warnings } : {}) };
+        return {
+          filename: document.filename,
+          title: document.title,
+          text: document.text,
+          document_id: result.document_id,
+        };
       }
       if (document.status === "failed") {
         throw new ApiError(document.error || "Không trích xuất được văn bản từ tệp.", 422);
@@ -197,14 +236,8 @@ export const api = {
     }
     throw new ApiError("Tệp vẫn đang được xử lý. Em có thể nhập đề trực tiếp trong lúc chờ.", 504);
   },
-  structure: (text: string, pages?: SourcePage[]) =>
-    post<DocumentStructure>("/uploads/structure", { text, ...(pages ? { pages } : {}) }),
-  rubric: () => request<Rubric>("/rubric"),
-  saveRubric: (criteria: Criterion[]) =>
-    request<Rubric>("/rubric", { method: "PUT", body: JSON.stringify({ criteria }) }),
   dashboard: () => request<Dashboard>("/dashboard"),
   progress: () => request<Progress>("/progress"),
-  overview: () => request<Overview>("/teacher/overview"),
   sessions: () => request<Session[]>("/sessions"),
   session: (id: string) => request<Session>(`/sessions/${id}`),
   start: (id: string) => post<Session>("/sessions", { assignment_id: id }),
@@ -225,6 +258,4 @@ export const api = {
       expected_version: session.version,
       client_message_id: key,
     }),
-  review: (id: string, scores: Record<string, number>, feedback: string) =>
-    post<Session>(`/sessions/${id}/reviews`, { scores, feedback }),
 };

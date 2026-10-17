@@ -10,16 +10,25 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DangKyRouteImport } from './routes/dang-ky'
+import { Route as DangNhapRouteImport } from './routes/dang-nhap'
 import { Route as DeBaiRouteImport } from './routes/de-bai'
 import { Route as PhienHocRouteImport } from './routes/phien-hoc'
 import { Route as TienTrinhRouteImport } from './routes/tien-trinh'
-import { Route as GiaoVienIndexRouteImport } from './routes/giao-vien/index'
-import { Route as GiaoVienDanhGiaRouteImport } from './routes/giao-vien/danh-gia'
-import { Route as GiaoVienRubricRouteImport } from './routes/giao-vien/rubric'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DangKyRoute = DangKyRouteImport.update({
+  id: '/dang-ky',
+  path: '/dang-ky',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DangNhapRoute = DangNhapRouteImport.update({
+  id: '/dang-nhap',
+  path: '/dang-nhap',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeBaiRoute = DeBaiRouteImport.update({
@@ -37,88 +46,55 @@ const TienTrinhRoute = TienTrinhRouteImport.update({
   path: '/tien-trinh',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GiaoVienIndexRoute = GiaoVienIndexRouteImport.update({
-  id: '/giao-vien/',
-  path: '/giao-vien/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GiaoVienDanhGiaRoute = GiaoVienDanhGiaRouteImport.update({
-  id: '/giao-vien/danh-gia',
-  path: '/giao-vien/danh-gia',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const GiaoVienRubricRoute = GiaoVienRubricRouteImport.update({
-  id: '/giao-vien/rubric',
-  path: '/giao-vien/rubric',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/dang-ky': typeof DangKyRoute
+  '/dang-nhap': typeof DangNhapRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
-  '/giao-vien/danh-gia': typeof GiaoVienDanhGiaRoute
-  '/giao-vien/rubric': typeof GiaoVienRubricRoute
-  '/giao-vien/': typeof GiaoVienIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/dang-ky': typeof DangKyRoute
+  '/dang-nhap': typeof DangNhapRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
-  '/giao-vien/danh-gia': typeof GiaoVienDanhGiaRoute
-  '/giao-vien/rubric': typeof GiaoVienRubricRoute
-  '/giao-vien': typeof GiaoVienIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/dang-ky': typeof DangKyRoute
+  '/dang-nhap': typeof DangNhapRoute
   '/de-bai': typeof DeBaiRoute
   '/phien-hoc': typeof PhienHocRoute
   '/tien-trinh': typeof TienTrinhRoute
-  '/giao-vien/danh-gia': typeof GiaoVienDanhGiaRoute
-  '/giao-vien/rubric': typeof GiaoVienRubricRoute
-  '/giao-vien/': typeof GiaoVienIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
-    | '/de-bai'
-    | '/phien-hoc'
-    | '/tien-trinh'
-    | '/giao-vien/danh-gia'
-    | '/giao-vien/rubric'
-    | '/giao-vien/'
+    '/' | '/dang-ky' | '/dang-nhap' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/de-bai'
-    | '/phien-hoc'
-    | '/tien-trinh'
-    | '/giao-vien/danh-gia'
-    | '/giao-vien/rubric'
-    | '/giao-vien'
+  to: '/' | '/dang-ky' | '/dang-nhap' | '/de-bai' | '/phien-hoc' | '/tien-trinh'
   id:
     | '__root__'
     | '/'
+    | '/dang-ky'
+    | '/dang-nhap'
     | '/de-bai'
     | '/phien-hoc'
     | '/tien-trinh'
-    | '/giao-vien/danh-gia'
-    | '/giao-vien/rubric'
-    | '/giao-vien/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DangKyRoute: typeof DangKyRoute
+  DangNhapRoute: typeof DangNhapRoute
   DeBaiRoute: typeof DeBaiRoute
   PhienHocRoute: typeof PhienHocRoute
   TienTrinhRoute: typeof TienTrinhRoute
-  GiaoVienDanhGiaRoute: typeof GiaoVienDanhGiaRoute
-  GiaoVienRubricRoute: typeof GiaoVienRubricRoute
-  GiaoVienIndexRoute: typeof GiaoVienIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -128,6 +104,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dang-ky': {
+      id: '/dang-ky'
+      path: '/dang-ky'
+      fullPath: '/dang-ky'
+      preLoaderRoute: typeof DangKyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dang-nhap': {
+      id: '/dang-nhap'
+      path: '/dang-nhap'
+      fullPath: '/dang-nhap'
+      preLoaderRoute: typeof DangNhapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/de-bai': {
@@ -151,38 +141,16 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TienTrinhRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/giao-vien/': {
-      id: '/giao-vien/'
-      path: '/giao-vien'
-      fullPath: '/giao-vien/'
-      preLoaderRoute: typeof GiaoVienIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/giao-vien/danh-gia': {
-      id: '/giao-vien/danh-gia'
-      path: '/giao-vien/danh-gia'
-      fullPath: '/giao-vien/danh-gia'
-      preLoaderRoute: typeof GiaoVienDanhGiaRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/giao-vien/rubric': {
-      id: '/giao-vien/rubric'
-      path: '/giao-vien/rubric'
-      fullPath: '/giao-vien/rubric'
-      preLoaderRoute: typeof GiaoVienRubricRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DangKyRoute: DangKyRoute,
+  DangNhapRoute: DangNhapRoute,
   DeBaiRoute: DeBaiRoute,
   PhienHocRoute: PhienHocRoute,
   TienTrinhRoute: TienTrinhRoute,
-  GiaoVienDanhGiaRoute: GiaoVienDanhGiaRoute,
-  GiaoVienRubricRoute: GiaoVienRubricRoute,
-  GiaoVienIndexRoute: GiaoVienIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

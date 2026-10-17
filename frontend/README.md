@@ -1,6 +1,6 @@
 # Bloom Guided Scribe
 
-> Giao diện gốc được tích hợp với FastAPI trong dự án SocraVăn. Xem [README tại thư mục gốc](../README.md) để cài đặt, chạy và kiểm tra phiên bản hiện tại. Các nội dung bên dưới là mô tả của repo nguồn.
+> Phiên bản hiện tại là ứng dụng tự học: học sinh tự tải/nhập đề, chọn mục tiêu Bloom, học với gia sư và lưu bài viết. Giao diện và API giáo viên đã được gỡ, không còn bộ đề có sẵn. Xem [README tại thư mục gốc](../README.md) để cài đặt, chạy và kiểm tra. Các nội dung bên dưới chỉ là mô tả lịch sử của repo nguồn.
 
 Bạn là Senior Frontend Engineer, UI/UX Designer và EdTech Product Designer, có kinh nghiệm xây dựng nền tảng giáo dục ứng dụng AI.
 

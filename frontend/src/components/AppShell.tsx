@@ -5,38 +5,34 @@ import {
   LayoutDashboard,
   MessagesSquare,
   LineChart,
-  Users,
-  ClipboardList,
-  FileCheck2,
   Menu,
   X,
   GraduationCap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/AuthProvider";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const studentNav = [
   { to: "/", label: "Tổng quan", icon: LayoutDashboard },
   { to: "/de-bai", label: "Đề bài của tôi", icon: BookOpen },
   { to: "/phien-hoc", label: "Phiên học Socratic", icon: MessagesSquare },
-  { to: "/tien-trinh", label: "Kết quả & tiến trình", icon: LineChart },
-] as const;
-const teacherNav = [
-  { to: "/giao-vien", label: "Lớp học", icon: Users },
-  { to: "/giao-vien/rubric", label: "Đề bài & rubric", icon: ClipboardList },
-  { to: "/giao-vien/danh-gia", label: "Đánh giá bài làm", icon: FileCheck2 },
+  { to: "/tien-trinh", label: "Tiến trình tự học", icon: LineChart },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const [open, setOpen] = useState(false);
-  const teacher = path.startsWith("/giao-vien");
+  const [signingOut, setSigningOut] = useState(false);
+  const auth = useAuth();
 
   const NavGroup = ({
     title,
     items,
   }: {
     title: string;
-    items: readonly { to: string; label: string; icon: typeof Users }[];
+    items: readonly { to: string; label: string; icon: typeof BookOpen }[];
   }) => (
     <div className="mb-6">
       <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -91,24 +87,39 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
         </div>
         <nav className="flex-1 overflow-y-auto p-3 pt-5">
-          <NavGroup title="Học sinh" items={studentNav} />
-          <NavGroup title="Giáo viên" items={teacherNav} />
+          <NavGroup title="Không gian tự học" items={studentNav} />
         </nav>
-        <div className="border-t p-4 flex items-center gap-3">
-          <div
-            className={cn(
-              "h-9 w-9 rounded-full grid place-items-center text-xs font-semibold",
-              teacher ? "bg-secondary-soft text-secondary" : "bg-primary-soft text-primary",
-            )}
+        <div className="border-t p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 shrink-0 rounded-full grid place-items-center text-xs font-semibold bg-primary-soft text-primary">
+              {auth.user?.display_name.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="text-sm leading-tight min-w-0">
+              <p className="font-medium truncate">{auth.user?.display_name}</p>
+              <p className="text-xs text-muted-foreground truncate">{auth.user?.email}</p>
+            </div>
+          </div>
+          <Button
+            className="w-full"
+            size="sm"
+            variant="outline"
+            disabled={signingOut}
+            onClick={() => {
+              setSigningOut(true);
+              void auth
+                .logout()
+                .catch((error: unknown) => {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Chưa đăng xuất được. Vui lòng thử lại.",
+                  );
+                })
+                .finally(() => setSigningOut(false));
+            }}
           >
-            {teacher ? "TH" : "MA"}
-          </div>
-          <div className="text-sm leading-tight">
-            <p className="font-medium">{teacher ? "Cô Trần Thu Hương" : "Nguyễn Minh Anh"}</p>
-            <p className="text-xs text-muted-foreground">
-              {teacher ? "Giáo viên Ngữ văn" : "Học sinh · 12A1"}
-            </p>
-          </div>
+            {signingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+          </Button>
         </div>
       </aside>
       {open && (

@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { BLOOM, bloomColor } from "@/lib/data";
 import { seo } from "@/lib/seo";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/components/AuthProvider";
 
 export const Route = createFileRoute("/phien-hoc")({
   validateSearch: (search: Record<string, unknown>): { assignment?: string } =>
@@ -41,28 +42,41 @@ function Session() {
     queryFn: async () => {
       if (assignment) return api.start(assignment);
       const sessions = await api.sessions();
-      return sessions.find((s) => !s.submitted) ?? sessions[0] ?? api.start("vo-nhat");
+      return sessions.find((s) => !s.submitted) ?? sessions[0] ?? null;
     },
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: false,
     retry: false,
   });
-  if (!query.data)
+  if (query.isPending || query.isError)
     return <ApiState loading={query.isPending} error={query.error} retry={query.refetch} />;
+  if (!query.data)
+    return (
+      <div className="p-6 lg:p-10 space-y-4">
+        <h1 className="text-2xl font-semibold">Bắt đầu phiên tự học đầu tiên</h1>
+        <p className="text-muted-foreground">
+          Tải lên hoặc nhập đề riêng để học cùng gia sư Socratic.
+        </p>
+        <Button asChild>
+          <Link to="/de-bai">Thêm đề tự học</Link>
+        </Button>
+      </div>
+    );
   return <SessionView key={query.data.id} session={query.data} queryKey={queryKey} />;
 }
 
 function SessionView({ session, queryKey }: { session: SavedSession; queryKey: string[] }) {
   const client = useQueryClient();
+  const { user } = useAuth();
+  const draftKey = `socratic:${user?.id}:draft:${session.id}`;
+  const essayKey = `socratic:${user?.id}:essay:${session.id}`;
   const a = session.assignment;
   const { step, done, submitted, turns } = session;
   const hintTier = session.hint_tier;
   const socraticSteps = session.steps;
-  const [draft, setDraft] = useState(() => localStorage.getItem(`draft:${session.id}`) || "");
-  const [essay, setEssay] = useState(
-    () => localStorage.getItem(`essay:${session.id}`) || session.essay,
-  );
+  const [draft, setDraft] = useState(() => sessionStorage.getItem(draftKey) || "");
+  const [essay, setEssay] = useState(() => sessionStorage.getItem(essayKey) || session.essay);
   const [busy, setBusy] = useState(false);
   const pending = useRef<{ type: string; text: string; key: string; session: SavedSession } | null>(
     null,
@@ -98,11 +112,11 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
       pending.current = null;
       if (type === "message") {
         setDraft("");
-        localStorage.removeItem(`draft:${session.id}`);
+        sessionStorage.removeItem(draftKey);
       }
       if (type === "submit") {
-        localStorage.removeItem(`essay:${session.id}`);
-        toast.success("Đã lưu bài nộp vào hệ thống");
+        sessionStorage.removeItem(essayKey);
+        toast.success("Đã lưu bài viết và hoàn thành phiên tự học");
       }
       void client.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "session" });
     } catch (error) {
@@ -134,9 +148,6 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
           <p className="text-xs font-medium text-secondary uppercase tracking-wider">Đề bài</p>
           <h1 className="font-semibold mt-1 leading-snug">{a.title}</h1>
           <p className="text-sm text-foreground/80 mt-2">{a.prompt}</p>
-          <blockquote className="mt-3 border-l-2 border-secondary pl-3 font-serif italic text-sm text-foreground/75 leading-relaxed">
-            {a.excerpt}
-          </blockquote>
         </div>
         <div>
           <p className="text-xs font-semibold text-muted-foreground mb-3">
@@ -209,7 +220,7 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
                   Mục tiêu lượt học: <BloomBadge level={t.level} /> · {t.hints} gợi ý
                 </div>
                 <p className="text-xs mt-2 text-secondary">
-                  Đã lưu câu trả lời. Giáo viên sẽ đánh giá nội dung và dẫn chứng.
+                  Đã lưu câu trả lời vào phiên tự học của bạn.
                 </p>
               </div>
             );
@@ -218,8 +229,8 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
             <div className="rounded-lg border border-secondary/40 bg-secondary-soft p-5">
               <p className="font-semibold text-secondary">Hoàn thành chuỗi câu hỏi</p>
               <p className="text-sm mt-1">
-                Em đã hoàn thành chuỗi câu hỏi luyện tập. Hãy tổng hợp thành bài viết để giáo viên
-                đánh giá.
+                Em đã hoàn thành chuỗi câu hỏi luyện tập. Hãy tổng hợp thành bài viết để lưu lại
+                cách lập luận của mình.
               </p>
               {!submitted ? (
                 <>
@@ -229,7 +240,7 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
                     value={essay}
                     onChange={(e) => {
                       setEssay(e.target.value);
-                      localStorage.setItem(`essay:${session.id}`, e.target.value);
+                      sessionStorage.setItem(essayKey, e.target.value);
                     }}
                   />
                   <Button
@@ -240,14 +251,14 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
                     }}
                   >
                     <FileCheck2 />
-                    {busy ? "Đang lưu…" : "Nộp bài làm"}
+                    {busy ? "Đang lưu…" : "Lưu bài viết & hoàn thành"}
                   </Button>
                 </>
               ) : (
                 <p className="mt-3 text-sm">
-                  Đã nộp.{" "}
+                  Đã lưu bài viết và hoàn thành phiên tự học.{" "}
                   <Link to="/tien-trinh" className="text-primary font-medium">
-                    Xem phản hồi và kết quả →
+                    Xem lại bài viết & tiến trình →
                   </Link>
                 </p>
               )}
@@ -262,7 +273,7 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
                 value={draft}
                 onChange={(e) => {
                   setDraft(e.target.value);
-                  localStorage.setItem(`draft:${session.id}`, e.target.value);
+                  sessionStorage.setItem(draftKey, e.target.value);
                 }}
                 placeholder="Viết suy nghĩ của em… (Ctrl + Enter để gửi)"
                 onKeyDown={(e) => {
@@ -358,7 +369,8 @@ function SessionView({ session, queryKey }: { session: SavedSession; queryKey: s
         <div className="text-xs text-muted-foreground leading-relaxed">
           <p className="font-semibold text-foreground mb-1">Nguyên tắc gợi ý thích ứng</p>
           Bản demo chuyển câu hỏi sau mỗi câu trả lời và lưu số gợi ý. Việc hoàn thành câu hỏi không
-          đồng nghĩa đã đạt năng lực Bloom tương ứng; giáo viên đánh giá bằng bài làm.
+          đồng nghĩa đã đạt năng lực Bloom tương ứng. Bạn có thể xem lại câu trả lời và bài viết để
+          tự đối chiếu cách lập luận.
         </div>
       </aside>
     </div>

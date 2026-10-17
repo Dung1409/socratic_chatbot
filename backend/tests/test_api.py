@@ -5,17 +5,29 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.db import Database
 from backend.app.main import create_app
 
 
 @pytest.fixture
-def client(database):
+def client(database, authorize):
     with TestClient(create_app(database.path)) as c:
+        authorize(c)
         yield c
 
 
-def start(client, assignment="vo-nhat"):
-    result = client.post("/api/sessions", json={"assignment_id": assignment})
+def assignment(client, title="Đề tự học đọc sách", target=6):
+    result = client.post("/api/assignments", json={
+        "title": title, "prompt": "Hãy trình bày quan điểm về ý nghĩa của việc đọc sách và đưa ra dẫn chứng.",
+        "target": target,
+    })
+    assert result.status_code == 201, result.text
+    return result.json()
+
+
+def start(client, assignment_id=None):
+    assignment_id = assignment_id or assignment(client)["id"]
+    result = client.post("/api/sessions", json={"assignment_id": assignment_id})
     assert result.status_code == 200, result.text
     return result.json()
 
@@ -31,37 +43,41 @@ def complete(client, session):
         result = action(client, session, "messages", text="Em cần tìm dẫn chứng trong văn bản để giải thích ý kiến của mình.")
         assert result.status_code == 200, result.text
         session = result.json()
-    result = action(client, session, "submit", essay="Bài làm độc lập của học sinh với luận điểm và dẫn chứng cụ thể để giáo viên đánh giá.")
+    result = action(client, session, "submit", essay="Bài viết tự học với luận điểm, dẫn chứng và phần giải thích mối liên hệ giữa chúng.")
     assert result.status_code == 200, result.text
     return result.json()
 
 
-def test_full_student_teacher_flow(client):
+def test_full_self_study_flow_without_seed_or_teacher(client):
     assert client.get("/api/health").json()["tutor_mode"] == "template"
-    assignments = client.get("/api/assignments").json()
-    assert len(assignments) == 3
-    assert all(a["status"] == "Chưa bắt đầu" for a in assignments)
-    assert client.get("/api/progress").json()["latest"] is None
+    assert client.get("/api/assignments").json() == []
+    assert client.get("/api/sessions").json() == []
+    assert client.get("/api/progress").json()["sessions"] == []
     session = start(client)
-    assert "requests" not in session
-    assert start(client)["id"] == session["id"]
+    assert "requests" not in session and "rubric" not in session and "review" not in session
+    assert "student_name" not in session and "class_name" not in session
+    assert session["assignment"]["source"] == "student"
+    assert start(client, session["assignment_id"])["id"] == session["id"]
     hinted = action(client, session, "hints")
     assert hinted.status_code == 200
     session = complete(client, hinted.json())
-    assert client.get("/api/dashboard").json()["pending"] == 1
-    scores = {c["id"]: 8 for c in session["rubric"]["criteria"]}
-    result = client.post(f"/api/sessions/{session['id']}/reviews", json={"scores": scores, "feedback": "Luận điểm rõ, cần giải thích kỹ hơn mối liên hệ giữa dẫn chứng và nhận định."})
-    assert result.status_code == 200, result.text
-    assert result.json()["review"]["total"] == 8
+    dashboard = client.get("/api/dashboard").json()
+    assert dashboard["submitted"] == 1 and dashboard["answers"] == 6
+    assert "pending" not in dashboard and "latest_review" not in dashboard
     progress = client.get("/api/progress").json()
-    assert progress["latest"]["essay"] == session["essay"]
-    assert progress["series"] == [{"week": "Bài 1", "score": 8}]
-    assert sum(p["value"] for p in progress["bloom_profile"]) == 5
-    assert client.get("/api/dashboard").json()["pending"] == 0
-    overview = client.get("/api/teacher/overview").json()
-    assert overview["students"][0]["score"] == 8
-    assert overview["students"][0]["bloom"] is None
-    assert all(t["quality"] is None for t in session["turns"] if t["kind"] == "student")
+    assert progress["sessions"][0]["essay"] == session["essay"]
+    assert sum(point["value"] for point in progress["bloom_profile"]) == 6
+    assert client.get("/api/assignments").json()[0]["status"] == "Đã hoàn thành"
+    assert all(turn["quality"] is None for turn in session["turns"] if turn["kind"] == "student")
+
+
+def test_teacher_endpoints_are_removed(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert not any("teacher" in path or "rubric" in path or "reviews" in path for path in paths)
+    assert client.get("/api/teacher/overview").status_code == 404
+    assert client.get("/api/rubric").status_code == 404
+    assert client.put("/api/rubric", json={"criteria": []}).status_code in {404, 405}
+    assert client.post("/api/sessions/missing/reviews", json={}).status_code in {404, 405}
 
 
 def test_idempotency_stale_versions_and_hint_limits(client):
@@ -85,56 +101,60 @@ def test_concurrent_messages_do_not_overwrite_turns(client):
     session = start(client)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: action(client, session, "messages", text="Em chọn một chi tiết để giải thích."), range(2)))
-    assert sorted(r.status_code for r in results) == [200, 409]
+    assert sorted(response.status_code for response in results) == [200, 409]
     saved = client.get(f"/api/sessions/{session['id']}").json()
-    assert len([t for t in saved["turns"] if t["kind"] == "student"]) == 1
+    assert len([turn for turn in saved["turns"] if turn["kind"] == "student"]) == 1
 
 
-def test_persistence_across_restart(tmp_path):
+def test_persistence_across_restart(tmp_path, authorize):
     path = str(tmp_path / "persistent.db")
     with TestClient(create_app(path)) as first:
-        session = start(first, "song")
-        session = action(first, session, "messages", text="Em đang tìm hiểu yêu cầu đề bài Sóng.").json()
+        authorize(first)
+        session = start(first)
+        session = action(first, session, "messages", text="Em đang tìm hiểu yêu cầu đề bài.").json()
     with TestClient(create_app(path)) as second:
+        authorize(second)
         assert second.get(f"/api/sessions/{session['id']}").json() == session
-        assert len(second.get("/api/assignments").json()) == 3
-        assert start(second, "song")["id"] == session["id"]
+        assert len(second.get("/api/assignments").json()) == 1
+        assert start(second, session["assignment_id"])["id"] == session["id"]
 
 
-def test_assignment_selection_and_rubric_snapshot(client):
-    created = client.post("/api/assignments", json={"title": "Trách nhiệm với cộng đồng", "prompt": "Hãy trình bày quan điểm của em về trách nhiệm với cộng đồng.", "target": 3})
-    assert created.status_code == 201
-    session = start(client, created.json()["id"])
-    assert session["assignment"]["title"] == created.json()["title"]
+def test_selected_assignment_and_bloom_target(client):
+    first = assignment(client, "Trách nhiệm với cộng đồng", 3)
+    second = assignment(client, "Ý nghĩa của lòng biết ơn", 5)
+    session = start(client, first["id"])
+    assert session["assignment"]["title"] == first["title"]
     assert len(session["steps"]) == 3
-    assert "Tràng" not in session["turns"][0]["text"]
-    new_criteria = [{"id": "new", "name": "Lập luận", "weight": 100, "desc": "Luận điểm và dẫn chứng"}]
-    result = client.put("/api/rubric", json={"criteria": new_criteria})
-    assert result.status_code == 200
-    assert result.json()["version"] == 2
-    assert client.get(f"/api/sessions/{session['id']}").json()["rubric"]["version"] == 1
-    assert start(client, "chi-pheo")["rubric"]["version"] == 2
-    completed = complete(client, session)
-    bad = client.post(f"/api/sessions/{completed['id']}/reviews", json={"scores": {"new": 9}, "feedback": "Cần dùng rubric gốc"})
-    assert bad.status_code == 422
+    assert len(start(client, second["id"])["steps"]) == 5
 
 
 def test_validation_and_state_transitions(client):
     assert client.post("/api/assignments", json={"title": "X", "prompt": "Y"}).status_code == 422
     assert client.post("/api/assignments", json={"title": "Đề bài hợp lệ", "prompt": "Nội dung yêu cầu đủ dài.", "target": 7}).status_code == 422
-    assert client.put("/api/rubric", json={"criteria": [{"id": "x", "name": "X", "weight": 90}]}).status_code == 422
-    assert client.put("/api/rubric", json={"criteria": [{"id": "x", "name": "X", "weight": 50}] * 2}).status_code == 422
+    assert client.post("/api/assignments", json={"title": "Đề bài hợp lệ", "prompt": "Nội dung yêu cầu đủ dài.", "source": "teacher"}).status_code == 422
     assert client.get("/api/sessions/missing").status_code == 404
-    assert client.post("/api/sessions", json={"assignment_id": "missing"}).status_code == 404
+    assert client.post("/api/sessions", json={"assignment_id": "vo-nhat"}).status_code == 404
     session = start(client)
     assert action(client, session, "messages", text="   ").status_code == 422
-    assert action(client, session, "submit", essay="Bài làm có đủ độ dài nhưng chưa hoàn tất câu hỏi.").status_code == 409
-    assert client.post(f"/api/sessions/{session['id']}/reviews", json={"scores": {"c1": 8}, "feedback": "Chưa nộp bài"}).status_code == 409
+    assert action(client, session, "submit", essay="Bài viết có đủ độ dài nhưng chưa hoàn tất câu hỏi.").status_code == 409
     completed = complete(client, session)
     assert action(client, completed, "messages", text="Muốn sửa lịch sử").status_code == 409
     assert action(client, completed, "hints").status_code == 409
-    scores = {c["id"]: 11 for c in completed["rubric"]["criteria"]}
-    assert client.post(f"/api/sessions/{session['id']}/reviews", json={"scores": scores, "feedback": "Điểm vượt giới hạn"}).status_code == 422
+
+
+def test_upgrade_hides_old_seed_preserves_personal_work(client, database):
+    personal = assignment(client)
+    session = start(client, personal["id"])
+    with database.connect(write=True) as conn:
+        Database.put(conn, "assignments", "vo-nhat", {"id": "vo-nhat", "title": "Đề mẫu cũ", "target": 4})
+        database.execute(conn, "DELETE FROM schema_migrations WHERE version=?", ("002_self_study",))
+    database.initialize()
+    database.initialize()
+    assert [item["id"] for item in client.get("/api/assignments").json()] == [personal["id"]]
+    assert client.get(f"/api/sessions/{session['id']}").json()["id"] == session["id"]
+    assert client.post("/api/sessions", json={"assignment_id": "vo-nhat"}).status_code == 404
+    with database.connect() as conn:
+        assert Database.get(conn, "assignments", "vo-nhat")["source"] == "legacy_seed"
 
 
 def test_upload_extraction_requires_confirmation(client):
@@ -142,20 +162,10 @@ def test_upload_extraction_requires_confirmation(client):
     assert result.status_code == 200
     assert result.json()["needs_confirmation"] is True
     assert "dẫn chứng" in result.json()["text"]
-    assert result.json()["structure"]["parts"][0]["questions"][0]["label"] == "Nội dung chưa tách được"
-    assert len(client.get("/api/assignments").json()) == 3
-    assert client.post("/api/uploads/extract", files={"file": ("scan.png", b"image", "image/png")}).status_code == 422
+    assert client.get("/api/assignments").json() == []
+    assert client.post("/api/uploads/extract", files={"file": ("scan.png", b"image", "image/png")}).status_code == 415
     assert client.post("/api/uploads/extract", files={"file": ("broken.pdf", b"not pdf", "application/pdf")}).status_code == 422
     assert client.post("/api/uploads/extract", files={"file": ("large.txt", b"x" * (10 * 1024 * 1024 + 1), "text/plain")}).status_code == 413
-
-
-def test_structure_endpoint_keeps_only_selected_question_context(client):
-    text = "PHẦN I. ĐỌC HIỂU\nVăn bản dùng chung.\nCâu 1. Tìm hình ảnh.\nCâu 2. Nêu tác dụng."
-    result = client.post("/api/uploads/structure", json={"text": text})
-    assert result.status_code == 200
-    assert len(result.json()["parts"][0]["questions"]) == 2
-    assert "Văn bản dùng chung" in result.json()["parts"][0]["context"]
-    assert client.post("/api/uploads/structure", json={"text": "ngắn"}).status_code == 422
 
 
 def test_docx_extraction(client):
@@ -164,29 +174,11 @@ def test_docx_extraction(client):
     doc.add_paragraph("Đề bài: Phân tích một vấn đề nghị luận xã hội.")
     table = doc.add_table(rows=1, cols=1)
     table.cell(0, 0).text = "Yêu cầu có dẫn chứng cụ thể."
-    doc.add_paragraph("Câu 1. Nêu một dẫn chứng phù hợp.")
     stream = io.BytesIO()
     doc.save(stream)
     response = client.post("/api/uploads/extract", files={"file": ("de-bai.docx", stream.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
     assert response.status_code == 200
     assert "dẫn chứng" in response.json()["text"]
-    assert response.json()["text"].index("Yêu cầu có dẫn chứng") < response.json()["text"].index("Câu 1")
-    assert response.json()["pages"][0]["label"] == "Tài liệu Word"
-    assert response.json()["structure"]["parts"][0]["questions"][0]["label"] == "Câu 1"
-
-
-def test_image_upload_returns_ocr_structure(client, monkeypatch):
-    from PIL import Image
-    from backend.app import extraction
-
-    picture = Image.new("RGB", (480, 300), "white")
-    stream = io.BytesIO()
-    picture.save(stream, format="JPEG")
-    monkeypatch.setattr(extraction, "_ocr_image", lambda _: ("PHẦN I. ĐỌC HIỂU\nCâu 1. Em thấy gì?", 90.0))
-    response = client.post("/api/uploads/extract", files={"file": ("anh-1.jpg", stream.getvalue(), "image/jpeg")})
-    assert response.status_code == 200
-    assert response.json()["pages"][0]["method"] == "ocr"
-    assert response.json()["structure"]["parts"][0]["questions"][0]["label"] == "Câu 1"
 
 
 def test_static_frontend_and_unknown_api(tmp_path):

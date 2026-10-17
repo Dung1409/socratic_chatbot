@@ -2,12 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
+  Navigate,
   HeadContent,
   createRootRouteWithContext,
   type ErrorComponentProps,
+  useRouterState,
 } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider, useAuth } from "@/components/AuthProvider";
+import { Button } from "@/components/ui/button";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: Root,
@@ -34,10 +38,36 @@ function Root() {
   return (
     <QueryClientProvider client={queryClient}>
       <HeadContent />
-      <AppShell>
-        <Outlet />
-      </AppShell>
-      <Toaster />
+      <AuthProvider>
+        <AccessGate />
+        <Toaster />
+      </AuthProvider>
     </QueryClientProvider>
+  );
+}
+
+function AccessGate() {
+  const auth = useAuth();
+  const path = useRouterState({ select: (state) => state.location.pathname });
+  const publicPage = path === "/dang-nhap" || path === "/dang-ky";
+  if (auth.pending)
+    return (
+      <div role="status" className="min-h-screen grid place-items-center text-muted-foreground">
+        Đang kiểm tra phiên đăng nhập…
+      </div>
+    );
+  if (auth.error)
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6">
+        <p role="alert">{auth.error}</p>
+        <Button onClick={auth.retry}>Thử lại</Button>
+      </div>
+    );
+  if (!auth.user) return publicPage ? <Outlet /> : <Navigate to="/dang-nhap" replace />;
+  if (publicPage) return <Navigate to="/" replace />;
+  return (
+    <AppShell>
+      <Outlet />
+    </AppShell>
   );
 }

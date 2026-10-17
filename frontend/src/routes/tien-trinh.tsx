@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   ResponsiveContainer,
@@ -7,24 +7,16 @@ import {
   PolarAngleAxis,
   PolarRadiusAxis,
   Radar,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
 } from "recharts";
 import { PageHeader, Panel } from "@/components/AppShell";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { ApiState } from "@/components/ApiState";
 import { seo } from "@/lib/seo";
 
 export const Route = createFileRoute("/tien-trinh")({
   head: () =>
-    seo(
-      "Kết quả & tiến trình",
-      "Kết quả đánh giá theo rubric và tiến trình phát triển tư duy Bloom của học sinh.",
-    ),
+    seo("Tiến trình tự học", "Xem lại phiên học, câu trả lời và bài viết Ngữ văn của bạn."),
   component: Page,
 });
 
@@ -32,19 +24,14 @@ function Page() {
   const query = useQuery({ queryKey: ["progress"], queryFn: api.progress });
   if (!query.data)
     return <ApiState loading={query.isPending} error={query.error} retry={query.refetch} />;
-  const { latest, pending, series: progressSeries, bloom_profile: bloomProfile } = query.data;
-  const rubric = latest?.rubric.criteria ?? [];
-  const review = latest?.review;
+  const { sessions, bloom_profile: bloomProfile } = query.data;
+  const completed = sessions.filter((session) => session.submitted).length;
   return (
     <>
       <PageHeader
-        eyebrow="Học sinh"
-        title="Kết quả & tiến trình"
-        desc={
-          latest
-            ? `Bài được chấm gần nhất: ${latest.assignment.title}`
-            : `Chưa có bài được chấm. ${pending} bài đang chờ giáo viên đánh giá.`
-        }
+        eyebrow="Nhật ký học tập"
+        title="Tiến trình tự học"
+        desc={`${sessions.length} phiên đã lưu · ${completed} phiên hoàn thành. Xem lại bài viết và cách lập luận của bạn.`}
       />
       <div className="p-6 lg:p-10 grid gap-6 xl:grid-cols-2">
         <Panel title="Số câu đã luyện tập theo bậc Bloom">
@@ -57,7 +44,7 @@ function Page() {
                   tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
                 />
                 <PolarRadiusAxis
-                  domain={[0, Math.max(1, ...bloomProfile.map((p) => p.value))]}
+                  domain={[0, Math.max(1, ...bloomProfile.map((point) => point.value))]}
                   tick={false}
                   axisLine={false}
                 />
@@ -71,72 +58,64 @@ function Page() {
               </RadarChart>
             </ResponsiveContainer>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Biểu đồ thể hiện hoạt động luyện tập, chưa phải điểm năng lực hoặc đánh giá tự động.
+          </p>
         </Panel>
-        <Panel title="Điểm bài làm được giáo viên chấm">
-          <div className="h-72">
-            <ResponsiveContainer>
-              <LineChart data={progressSeries}>
-                <CartesianGrid stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="week" tick={{ fontSize: 12 }} stroke="var(--muted-foreground)" />
-                <YAxis tick={{ fontSize: 12 }} stroke="var(--muted-foreground)" domain={[0, 10]} />
-                <Tooltip />
-                <Line
-                  isAnimationActive={false}
-                  dataKey="score"
-                  name="Điểm bài làm"
-                  stroke="var(--primary)"
-                  strokeWidth={2}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
-        <Panel
-          title="Đánh giá theo rubric"
-          action={
-            <span className="text-sm font-semibold text-primary">
-              {review ? `Tổng ${review.total} / 10` : "Chờ đánh giá"}
-            </span>
-          }
-        >
-          {!review && (
-            <p className="text-sm text-muted-foreground">
-              Điểm và nhận xét sẽ hiển thị sau khi giáo viên chấm bài.
-            </p>
-          )}
-          <ul className="space-y-4">
-            {rubric.map((r) => (
-              <li key={r.id}>
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">
-                    {r.name}{" "}
-                    <span className="text-muted-foreground font-normal">· {r.weight}%</span>
-                  </span>
-                  <span>{review?.scores[r.id] ?? "—"}/10</span>
-                </div>
-                <div className="mt-1.5 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className="h-full bg-secondary"
-                    style={{ width: `${(review?.scores[r.id] ?? 0) * 10}%` }}
-                  />
-                </div>
-              </li>
-            ))}
+        <Panel title="Tự đối chiếu sau mỗi phiên">
+          <ul className="space-y-3 text-sm text-foreground/80 list-disc pl-5">
+            <li>Mình đã xác định rõ yêu cầu và luận điểm chính chưa?</li>
+            <li>Dẫn chứng có trong ngữ liệu và hỗ trợ được luận điểm không?</li>
+            <li>Mình đã giải thích mối liên hệ giữa dẫn chứng và nhận định chưa?</li>
+            <li>Có góc nhìn khác hoặc phản biện nào cần xem xét thêm?</li>
           </ul>
         </Panel>
-        <Panel title="Phản hồi">
-          <div className="space-y-4 text-sm leading-relaxed">
-            <div className="whitespace-pre-wrap">
-              <p className="text-xs font-semibold text-secondary mb-1">Nhận xét của giáo viên</p>
-              {review?.feedback ?? "Chưa có nhận xét."}
-            </div>
-            <div className="rounded-md bg-primary-soft p-3">
-              <p className="text-xs font-semibold text-primary mb-1">Cách đọc biểu đồ</p>Biểu đồ
-              Bloom thể hiện số câu đã luyện tập. Đây chưa phải kết luận về năng lực tư duy; điểm
-              bài làm do giáo viên đánh giá theo rubric.
-            </div>
-          </div>
-        </Panel>
+        <div className="xl:col-span-2 space-y-4">
+          <h2 className="font-semibold">Các phiên tự học đã lưu</h2>
+          {sessions.length === 0 ? (
+            <Panel title="Chưa có phiên học">
+              <p className="text-sm text-muted-foreground mb-4">
+                Thêm đề riêng để bắt đầu và ghi lại tiến trình luyện tập.
+              </p>
+              <Button asChild>
+                <Link to="/de-bai">Thêm đề tự học</Link>
+              </Button>
+            </Panel>
+          ) : (
+            sessions.map((session) => (
+              <Panel
+                key={session.id}
+                title={session.assignment.title}
+                action={
+                  <span className="text-xs text-muted-foreground">
+                    {session.submitted ? "Đã hoàn thành" : "Đang học"}
+                  </span>
+                }
+              >
+                <p className="text-xs text-muted-foreground mb-3">
+                  {new Date(session.updated_at).toLocaleString("vi-VN")} ·{" "}
+                  {session.turns.filter((turn) => turn.kind === "student").length} câu trả lời ·{" "}
+                  {session.turns.filter((turn) => turn.kind === "hint").length} gợi ý
+                </p>
+                {session.submitted && (
+                  <details className="mb-4 rounded-md border p-3">
+                    <summary className="cursor-pointer text-sm font-medium">
+                      Bài viết cuối phiên
+                    </summary>
+                    <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
+                      {session.essay}
+                    </p>
+                  </details>
+                )}
+                <Button asChild variant="outline" size="sm">
+                  <Link to="/phien-hoc" search={{ assignment: session.assignment_id }}>
+                    {session.submitted ? "Xem lại đối thoại" : "Tiếp tục phiên học"}
+                  </Link>
+                </Button>
+              </Panel>
+            ))
+          )}
+        </div>
       </div>
     </>
   );

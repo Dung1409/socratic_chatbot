@@ -7,19 +7,21 @@ import { routeTree } from "@/routeTree.gen";
 // Match routes without running loaders or rendering: loaders may need a server or
 // network the test run lacks, and jsdom never loads the stylesheets React waits on.
 describe("App routing", () => {
-  it.each([
-    "/",
-    "/de-bai",
-    "/phien-hoc",
-    "/tien-trinh",
-    "/giao-vien",
-    "/giao-vien/rubric",
-    "/giao-vien/danh-gia",
-  ])("matches the page %s instead of falling back to not found", (url) => {
-    const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+  it.each(["/", "/de-bai", "/phien-hoc", "/tien-trinh", "/dang-nhap", "/dang-ky"])(
+    "matches the page %s instead of falling back to not found",
+    (url) => {
+      const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
 
-    const matches = router.matchRoutes(url);
+      const matches = router.matchRoutes(url);
 
-    expect(matches.at(-1)?.routeId).not.toBe(rootRouteId);
-  });
+      expect(matches.at(-1)?.routeId).not.toBe(rootRouteId);
+    },
+  );
+  it.each(["/giao-vien", "/giao-vien/rubric", "/giao-vien/danh-gia"])(
+    "does not expose the removed teacher page %s",
+    (url) => {
+      const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+      expect(router.matchRoutes(url).at(-1)?.routeId).toBe(rootRouteId);
+    },
+  );
 });

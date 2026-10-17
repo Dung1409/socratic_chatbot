@@ -147,6 +147,7 @@ def _ocr_image(image) -> tuple[str, float | None]:
     current_key = None
     line_words = []
     line_indexes = []
+    line_scores = []
     scores = []
 
     def plain(value: str) -> str:
@@ -159,7 +160,9 @@ def _ocr_image(image) -> tuple[str, float | None]:
     def flush():
         if line_words:
             value = " ".join(line_words)
-            if os.getenv("OCR_PROVIDER", "tesseract").lower() == "vietocr":
+            line_confidence = sum(line_scores) / len(line_scores) if line_scores else 0
+            use_vietocr = os.getenv("VIETOCR_FORCE", "false").lower() == "true" or line_confidence < 88
+            if os.getenv("OCR_PROVIDER", "tesseract").lower() == "vietocr" and use_vietocr:
                 left = min(words["left"][i] for i in line_indexes)
                 top = min(words["top"][i] for i in line_indexes)
                 right = max(words["left"][i] + words["width"][i] for i in line_indexes)
@@ -193,6 +196,7 @@ def _ocr_image(image) -> tuple[str, float | None]:
             lines.append(value)
             line_words.clear()
             line_indexes.clear()
+            line_scores.clear()
 
     for index, value in enumerate(words["text"]):
         value = value.strip()
@@ -210,6 +214,7 @@ def _ocr_image(image) -> tuple[str, float | None]:
         current_key = key
         line_words.append(value)
         line_indexes.append(index)
+        line_scores.append(confidence)
         scores.append(confidence)
     flush()
     return "\n".join(lines).strip(), round(sum(scores) / len(scores), 1) if scores else None

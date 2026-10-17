@@ -140,6 +140,24 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 "structure": structure_text(extracted["text"], extracted["pages"]),
                 "needs_confirmation": True}
 
+    @app.post("/api/uploads/extract-batch", tags=["Assignments"])
+    def extract_batch(files: list[UploadFile] = File(...), user: Principal = Depends(auth.current_user)):
+        """Extract several pages/images in submitted order without merging them blindly."""
+        if not files:
+            raise HTTPException(422, "Cần tải lên ít nhất một tệp")
+        documents = []
+        for sequence, file in enumerate(files, start=1):
+            filename, data = read_upload(file)
+            try:
+                extracted = extract_document(filename, data)
+            except ExtractionError as exc:
+                raise HTTPException(exc.status_code, f"Tệp {sequence} ({filename}): {exc}") from exc
+            documents.append({"sequence": sequence, "filename": filename, "title": Path(filename).stem,
+                              **extracted,
+                              "structure": structure_text(extracted["text"], extracted["pages"])})
+        return {"documents": documents, "needs_confirmation": True,
+                "warnings": ["Thứ tự nhiều tệp được giữ theo thứ tự gửi lên; hãy đối chiếu số trang in trên ảnh."]}
+
     @app.post("/api/uploads/structure", tags=["Assignments"])
     def analyze_structure(body: StructureInput, user: Principal = Depends(auth.current_user)):
         return structure_text(body.text, [page.model_dump() for page in body.pages] if body.pages else None)

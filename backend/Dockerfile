@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr tesseract-ocr-vie tesseract-ocr-eng \
+    tesseract-ocr tesseract-ocr-vie tesseract-ocr-eng libreoffice-writer \
     && rm -rf /var/lib/apt/lists/*
 # Pin the official high-accuracy Vietnamese model. The checksum prevents a
 # mutable upstream URL from silently changing OCR results between builds.

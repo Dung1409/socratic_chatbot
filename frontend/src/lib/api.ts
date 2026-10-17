@@ -216,7 +216,11 @@ export type DocumentStructure = {
 };
 type ExtractedDocument = {
   filename: string; title: string; text: string; document_id?: string;
-  structure?: DocumentStructure; pages?: SourcePage[]; warnings?: string[];
+  structure?: DocumentStructure; pages?: SourcePage[]; blocks?: ContentBlock[]; warnings?: string[]; document_type?: string;
+};
+export type ContentBlock = {
+  id: string; type: "heading" | "paragraph" | "list_item" | string;
+  text: string; page: number; method: string;
 };
 type PendingDocument = { document_id: string; job_id: string; status: string };
 type DocumentStatus = PendingDocument & {
@@ -226,7 +230,9 @@ type DocumentStatus = PendingDocument & {
   error: string | null;
   structure?: DocumentStructure | null;
   pages?: SourcePage[];
+  blocks?: ContentBlock[];
   extraction_warnings?: string[];
+  document_type?: string;
 };
 
 export const api = {
@@ -252,6 +258,8 @@ export const api = {
           document_id: result.document_id,
           ...(document.structure ? { structure: document.structure } : {}),
           ...(document.pages ? { pages: document.pages } : {}),
+          ...(document.blocks ? { blocks: document.blocks } : {}),
+          ...(document.document_type ? { document_type: document.document_type } : {}),
           ...(document.extraction_warnings ? { warnings: document.extraction_warnings } : {}) };
       }
       if (document.status === "failed") {
@@ -260,6 +268,13 @@ export const api = {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     throw new ApiError("Tệp vẫn đang được xử lý. Em có thể nhập đề trực tiếp trong lúc chờ.", 504);
+  },
+  extractBatch: (files: File[]) => {
+    const data = new FormData();
+    files.forEach((file) => data.append("files", file));
+    return request<{ documents: ExtractedDocument[]; warnings: string[]; needs_confirmation: boolean }>(
+      "/uploads/extract-batch", { method: "POST", body: data },
+    );
   },
   structure: (text: string, pages?: SourcePage[]) =>
     post<DocumentStructure>("/uploads/structure", { text, ...(pages ? { pages } : {}) }),

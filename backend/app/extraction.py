@@ -6,6 +6,8 @@ original upload is retained by the job queue; extraction never sends it to AI.
 
 import io
 import os
+import subprocess
+import tempfile
 import unicodedata
 import zipfile
 from pathlib import Path
@@ -15,6 +17,7 @@ MAX_TEXT_CHARS = 150_000
 MAX_PDF_PAGES = 30
 MAX_IMAGE_PIXELS = 20_000_000
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+WORD_SUFFIXES = {".doc", ".docx"}
 
 
 class ExtractionError(ValueError):
@@ -25,7 +28,7 @@ class ExtractionError(ValueError):
 
 def validate_upload(filename: str, data: bytes):
     suffix = Path(filename).suffix.lower()
-    if suffix not in {".txt", ".pdf", ".docx", *IMAGE_SUFFIXES}:
+    if suffix not in {".txt", ".pdf", ".doc", ".docx", *IMAGE_SUFFIXES}:
         raise ExtractionError("Chỉ hỗ trợ TXT, PDF, DOCX, PNG, JPG/JPEG và WEBP.", 415)
     if not data:
         raise ExtractionError("Tệp rỗng")
@@ -35,6 +38,8 @@ def validate_upload(filename: str, data: bytes):
         raise ExtractionError("Tệp PDF không hợp lệ")
     if suffix == ".docx" and not zipfile.is_zipfile(io.BytesIO(data)):
         raise ExtractionError("Tệp DOCX không hợp lệ", 415)
+    if suffix == ".doc" and data[:8] != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        raise ExtractionError("Tệp DOC không hợp lệ", 415)
     if suffix == ".png" and not data.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ExtractionError("Tệp PNG không hợp lệ", 415)
     if suffix in {".jpg", ".jpeg"} and not data.startswith(b"\xff\xd8"):
@@ -183,19 +188,100 @@ def _docx_pages(data: bytes):
              "method": "text", "confidence": None}]
 
 
+def _doc_pages(data: bytes):
+    """Convert legacy binary DOC through LibreOffice, then parse the DOCX."""
+    office = os.getenv("LIBREOFFICE_BIN", "soffice")
+    with tempfile.TemporaryDirectory(prefix="socratic-doc-") as directory:
+        source = Path(directory) / "input.doc"
+        source.write_bytes(data)
+        try:
+            completed = subprocess.run(
+                [office, "--headless", "--convert-to", "docx", "--outdir", directory, str(source)],
+                capture_output=True, text=True, timeout=45, check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise ExtractionError("Chưa cài LibreOffice để đổi DOC sang DOCX; hãy tải DOCX hoặc PDF.", 415) from exc
+        converted = Path(directory) / "input.docx"
+        if completed.returncode != 0 or not converted.exists():
+            raise ExtractionError("Không chuyển được DOC cũ; hãy lưu lại dưới dạng DOCX hoặc PDF.", 415)
+        return _docx_pages(converted.read_bytes())
+
+
+def _decode_text(data: bytes) -> str:
+    """Decode common Vietnamese text encodings without silently replacing bytes."""
+    for encoding in ("utf-8-sig", "utf-16", "cp1258", "cp1252"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ExtractionError("Không đọc được mã hóa TXT; hãy lưu tài liệu dưới dạng UTF-8.", 422)
+
+
+def classify_document(text: str, filename: str = "") -> str:
+    """Coarse profile used to select a subject/document parser."""
+    folded = unicodedata.normalize("NFD", text.upper())
+    folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")
+    if any(marker in folded for marker in ("DAP AN", "HUONG DAN CHAM", "THANG DIEM", "RUBRIC")):
+        return "answer_key"
+    if any(marker in folded for marker in ("DE THI", "CAU 1", "CAU 2", "THOI GIAN LAM BAI")):
+        return "exam"
+    if any(marker in folded for marker in ("MUC TIEU BAI HOC", "HOAT DONG", "LUYEN TAP")):
+        return "lesson_note"
+    if any(marker in folded for marker in ("BAI TAP", "YEU CAU", "NHIEM VU")):
+        return "assignment"
+    if filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        return "image_note"
+    return "reference_document"
+
+
+def _content_blocks(pages: list[dict]) -> list[dict]:
+    """Create small, provenance-aware blocks for non-exam documents too."""
+    blocks = []
+    for page in pages:
+        paragraph = []
+
+        def flush():
+            if paragraph:
+                value = " ".join(part.strip() for part in paragraph).strip()
+                if value:
+                    blocks.append({"id": f"block-{len(blocks) + 1}", "type": "paragraph",
+                                   "text": value, "page": page["number"], "method": page["method"]})
+                paragraph.clear()
+
+        for raw in page["text"].replace("\r", "").split("\n"):
+            line = raw.strip()
+            if not line:
+                flush()
+                continue
+            if len(line) <= 100 and (line.isupper() or line.endswith(":") or line.startswith(("#", "##"))):
+                flush()
+                blocks.append({"id": f"block-{len(blocks) + 1}", "type": "heading",
+                               "text": line.lstrip("# "), "page": page["number"], "method": page["method"]})
+            elif line.startswith(("- ", "• ", "* ")):
+                flush()
+                blocks.append({"id": f"block-{len(blocks) + 1}", "type": "list_item",
+                               "text": line[2:].strip(), "page": page["number"], "method": page["method"]})
+            else:
+                paragraph.append(line)
+        flush()
+    return blocks
+
+
 def extract_document(filename: str, data: bytes) -> dict:
     """Return text and ordered units; never silently discard an unreadable page."""
     validate_upload(filename, data)
     suffix = Path(filename).suffix.lower()
     try:
         if suffix == ".txt":
-            text = data.decode("utf-8-sig")
+            text = _decode_text(data)
             pages = [{"number": 1, "label": "Tệp TXT", "text": text.strip(),
                       "method": "text", "confidence": None}]
         elif suffix == ".pdf":
             pages = _pdf_pages(data)
         elif suffix == ".docx":
             pages = _docx_pages(data)
+        elif suffix == ".doc":
+            pages = _doc_pages(data)
         else:
             text, confidence = _ocr_image(_image(data))
             pages = [{"number": 1, "label": "Ảnh 1", "text": text,
@@ -211,7 +297,8 @@ def extract_document(filename: str, data: bytes) -> dict:
             warnings.append("OCR có thể đọc sai dấu hoặc từ dù điểm tin cậy cao; hãy đối chiếu ảnh gốc trước khi học.")
         warnings.extend(f"{page['label']} OCR chưa chắc chắn; cần xem lại chữ."
                         for page in pages if page["confidence"] is not None and page["confidence"] < 65)
-        return {"text": text, "pages": pages, "warnings": warnings}
+        return {"text": text, "pages": pages, "blocks": _content_blocks(pages),
+                "warnings": warnings, "document_type": classify_document(text, filename)}
     except ExtractionError:
         raise
     except Exception as exc:

@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .db import Database
-from .extraction import MAX_FILE_BYTES, validate_upload
+from .extraction import MAX_FILE_BYTES, _content_blocks, classify_document, validate_upload
 from .structure import structure_text
 
 
@@ -64,7 +64,9 @@ class JobQueue:
         result = dict(row)
         result["pages"] = json.loads(result.pop("extracted_pages") or "[]")
         result["extraction_warnings"] = json.loads(result["extraction_warnings"] or "[]")
+        result["blocks"] = _content_blocks(result["pages"]) if result["pages"] else []
         result["structure"] = structure_text(result["text"], result["pages"]) if result["text"] else None
+        result["document_type"] = classify_document(result["text"] or "", result["filename"])
         return result
 
     def claim(self):

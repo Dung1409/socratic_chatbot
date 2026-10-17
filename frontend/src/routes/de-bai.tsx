@@ -228,7 +228,7 @@ function Page() {
               </Button>
             </div>
             <span className="text-xs text-muted-foreground mt-3">
-              Tối đa 12 ảnh JPG/PNG/WEBP hoặc một tệp PDF/DOCX/TXT · mỗi tệp tối đa 10MB
+              Tối đa 12 ảnh JPG/PNG/WEBP hoặc một tệp PDF/DOC/DOCX/TXT · mỗi tệp tối đa 10MB
             </span>
             <input
               ref={imageInput}
@@ -249,7 +249,7 @@ function Page() {
               disabled={busy}
               type="file"
               className="hidden"
-              accept=".pdf,.docx,.txt"
+              accept=".pdf,.doc,.docx,.txt"
               onChange={(e) => {
                 chooseFiles(Array.from(e.target.files ?? []));
                 e.target.value = "";

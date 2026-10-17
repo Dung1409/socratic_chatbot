@@ -41,11 +41,11 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
   await expect(
     page.getByText("Dẫn chứng nào trong đề giúp em bảo vệ nhận định đó?", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Hỗ trợ bổ sung · tính 1 lượt")).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Gợi ý bổ sung", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Xin gợi ý", exact: true }).click();
-  await expect(page.getByText("Hỗ trợ bổ sung · tính 1 lượt")).toHaveCount(1);
+  await expect(page.getByRole("article", { name: "Gợi ý bổ sung", exact: true })).toHaveCount(1);
   await page.getByRole("button", { name: "Xin gợi ý", exact: true }).click();
-  await expect(page.getByText("Hỗ trợ bổ sung · tính 1 lượt")).toHaveCount(2);
+  await expect(page.getByRole("article", { name: "Gợi ý bổ sung", exact: true })).toHaveCount(2);
   await page.getByRole("button", { name: "Kết thúc đối thoại & tổng hợp" }).click();
   const essay =
     "Em cho rằng tài năng tạo thuận lợi nhưng cần nỗ lực và điều kiện phù hợp. Vì thế, không thể coi tài năng là yếu tố duy nhất quyết định thành công.";
@@ -111,5 +111,5 @@ test("failed student input survives reload and can be canceled without counting 
   await expect(page.getByLabel("Suy nghĩ của em", { exact: true })).toHaveValue(
     "[fail] Em muốn giữ câu trả lời này sau khi lỗi.",
   );
-  await expect(page.getByText("Hỗ trợ bổ sung · tính 1 lượt")).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Gợi ý bổ sung", exact: true })).toHaveCount(0);
 });

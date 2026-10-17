@@ -182,3 +182,127 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* Learning workspace tokens are scoped so other pages keep their existing palette. */
+.learning-theme {
+  --primary: #4f46e5;
+  --primary-soft: #eef2ff;
+  --primary-foreground: #ffffff;
+  --primary-hover: #4338ca;
+  --background: #f8fafc;
+  --card: #ffffff;
+  --foreground: #0f172a;
+  --card-foreground: #0f172a;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #4f46e5;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 12px;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.learning-app {
+  height: var(--learning-viewport-height, 100dvh);
+}
+
+.learning-workspace {
+  --learning-chat-width: 820px;
+  width: 100%;
+}
+
+.learning-chat-content {
+  max-width: var(--learning-chat-width);
+}
+
+.learning-conversation-content {
+  max-width: calc(var(--learning-chat-width) + 48px);
+}
+
+@media (min-width: 1280px) {
+  .learning-workspace {
+    max-width: 1360px;
+    column-gap: 24px;
+  }
+
+  .learning-panel {
+    width: clamp(340px, 24vw, 360px);
+  }
+}
+
+@media (min-width: 1600px) {
+  .learning-workspace {
+    --learning-chat-width: 860px;
+  }
+
+  .learning-panel {
+    width: clamp(400px, 24vw, 420px);
+  }
+}
+
+.learning-history {
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+}
+
+.learning-composer {
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.learning-composer-input {
+  scrollbar-width: thin;
+}
+
+.learning-primary:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.learning-theme :where(button, a, summary, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.learning-composer-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Make room for typing when the visual viewport shrinks around a phone keyboard. */
+.learning-app[data-compact-height="true"] .learning-mobile-header,
+.learning-app[data-compact-height="true"] .learning-composer-help,
+.learning-app[data-compact-height="true"] .learning-session-meta,
+.learning-app[data-compact-height="true"] .learning-composer-labels button {
+  display: none;
+}
+
+.learning-app[data-compact-height="true"] .learning-session-header {
+  padding-block: 8px;
+}
+
+.learning-app[data-compact-height="true"] .learning-composer-labels {
+  margin-bottom: 0;
+}
+
+.learning-app[data-compact-height="true"] .learning-composer-labels label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.learning-app[data-compact-height="true"] .learning-composer-input {
+  min-height: 64px;
+  max-height: clamp(64px, calc(var(--learning-viewport-height) - 280px), 128px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .learning-theme,
+  .learning-theme * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

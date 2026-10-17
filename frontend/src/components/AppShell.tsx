@@ -1,17 +1,27 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BookOpen,
   LayoutDashboard,
   MessagesSquare,
   LineChart,
   Menu,
-  X,
   GraduationCap,
+  PanelLeftClose,
+  PanelLeftOpen,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/AuthProvider";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 
 const studentNav = [
@@ -23,121 +33,243 @@ const studentNav = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const learning = path === "/phien-hoc";
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const app = useRef<HTMLDivElement>(null);
   const auth = useAuth();
 
-  const NavGroup = ({
-    title,
-    items,
-  }: {
-    title: string;
-    items: readonly { to: string; label: string; icon: typeof BookOpen }[];
-  }) => (
-    <div className="mb-6">
-      <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </p>
-      {items.map((i) => {
-        const active = i.to === "/" ? path === "/" : path === i.to;
-        return (
-          <Link
-            key={i.to}
-            to={i.to}
-            onClick={() => setOpen(false)}
-            className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-              active
-                ? "bg-accent text-accent-foreground font-medium"
-                : "text-foreground/75 hover:bg-muted",
-            )}
-          >
-            <i.icon className="h-4 w-4" />
-            {i.label}
-          </Link>
-        );
-      })}
-    </div>
-  );
+  // Match the visible viewport when a phone's software keyboard opens. This is
+  // layout-only and does not remount the session or change its cached data.
+  useEffect(() => {
+    if (!learning || !window.visualViewport) return;
+    const viewport = window.visualViewport;
+    const element = app.current;
+    const update = () => {
+      element?.style.setProperty("--learning-viewport-height", `${viewport.height}px`);
+      if (element) element.dataset["compactHeight"] = String(viewport.height < 520);
+    };
+    update();
+    viewport.addEventListener("resize", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      element?.style.removeProperty("--learning-viewport-height");
+      if (element) delete element.dataset["compactHeight"];
+    };
+  }, [learning]);
 
-  return (
-    <div className="min-h-screen bg-background">
-      <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-40 w-64 border-r bg-sidebar flex flex-col transition-transform lg:translate-x-0",
-          open ? "translate-x-0" : "-translate-x-full",
-        )}
-      >
-        <div className="h-16 flex items-center gap-2.5 px-5 border-b">
-          <div className="h-8 w-8 rounded-md bg-primary text-primary-foreground grid place-items-center">
-            <GraduationCap className="h-4.5 w-4.5" />
+  const logout = () => {
+    setSigningOut(true);
+    void auth
+      .logout()
+      .catch((error: unknown) => {
+        toast.error(
+          error instanceof Error ? error.message : "Chưa đăng xuất được. Vui lòng thử lại.",
+        );
+      })
+      .finally(() => setSigningOut(false));
+  };
+
+  const sidebar = (drawer = false) => {
+    const compact = learning && !drawer;
+    const label = compact ? (collapsed ? "sr-only" : "sr-only xl:not-sr-only") : "";
+    return (
+      <>
+        <div
+          className={cn(
+            "flex h-24 shrink-0 items-center gap-2.5 border-b px-5",
+            compact && "h-[89px] justify-center px-4",
+            compact && !collapsed && "xl:justify-start xl:px-5",
+          )}
+        >
+          <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
+            <GraduationCap aria-hidden="true" className="size-[18px]" />
           </div>
-          <div className="leading-tight">
-            <p className="font-semibold text-sm">
+          <div className={cn("leading-tight", label)}>
+            <p className="text-sm font-semibold">
               Socra<span className="text-primary">Văn</span>
             </p>
-            <p className="text-[11px] text-muted-foreground">Gia sư AI · Socratic × Bloom</p>
+            <p className="mt-1 whitespace-nowrap text-[10px] text-muted-foreground">
+              Gia sư AI · Socratic × Bloom
+            </p>
           </div>
-          <button
-            className="ml-auto lg:hidden"
-            onClick={() => setOpen(false)}
-            aria-label="Đóng menu"
-          >
-            <X className="h-5 w-5" />
-          </button>
         </div>
-        <nav className="flex-1 overflow-y-auto p-3 pt-5">
-          <NavGroup title="Không gian tự học" items={studentNav} />
+        <nav
+          aria-label="Điều hướng chính"
+          className={cn(
+            "min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pt-6",
+            compact && "px-2",
+            compact && !collapsed && "xl:px-3",
+          )}
+        >
+          <p
+            className={cn(
+              "mb-3 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground",
+              label,
+            )}
+          >
+            Không gian tự học
+          </p>
+          <TooltipProvider delayDuration={300}>
+            {studentNav.map((item) => (
+              <Tooltip key={item.to}>
+                <TooltipTrigger asChild>
+                  <Link
+                    to={item.to}
+                    aria-label={item.label}
+                    aria-current={path === item.to ? "page" : undefined}
+                    onClick={() => setOpen(false)}
+                    className={cn(
+                      "flex min-h-12 items-center gap-3 rounded-lg px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                      path === item.to
+                        ? "bg-primary-soft font-semibold text-primary"
+                        : "text-foreground/75 hover:bg-muted",
+                      compact && "justify-center px-0",
+                      compact && !collapsed && "xl:justify-start xl:px-3",
+                    )}
+                  >
+                    <item.icon
+                      aria-hidden="true"
+                      className="size-[18px] shrink-0"
+                      strokeWidth={1.75}
+                    />
+                    <span className={label}>{item.label}</span>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="bg-foreground text-white">
+                  {item.label}
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </TooltipProvider>
         </nav>
-        <div className="border-t p-4 space-y-3">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 shrink-0 rounded-full grid place-items-center text-xs font-semibold bg-primary-soft text-primary">
+        <div
+          className={cn(
+            "space-y-3 border-t p-4",
+            compact && "px-2",
+            compact && !collapsed && "xl:px-4",
+          )}
+        >
+          {compact && (
+            <Button
+              variant="ghost"
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
+              title={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
+              className={cn(
+                "hidden h-10 w-full text-muted-foreground xl:flex",
+                !collapsed && "justify-start px-2",
+              )}
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              {collapsed ? (
+                <PanelLeftOpen aria-hidden="true" />
+              ) : (
+                <PanelLeftClose aria-hidden="true" />
+              )}
+              <span className={label}>Thu gọn điều hướng</span>
+            </Button>
+          )}
+          <div
+            className={cn(
+              "flex items-center gap-3",
+              compact && "justify-center",
+              compact && !collapsed && "xl:justify-start",
+            )}
+          >
+            <div
+              className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-soft text-xs font-semibold text-primary"
+              title={auth.user?.display_name}
+            >
               {auth.user?.display_name.slice(0, 2).toUpperCase()}
             </div>
-            <div className="text-sm leading-tight min-w-0">
-              <p className="font-medium truncate">{auth.user?.display_name}</p>
-              <p className="text-xs text-muted-foreground truncate">{auth.user?.email}</p>
+            <div className={cn("min-w-0 text-sm leading-tight", label)}>
+              <p className="truncate font-medium">{auth.user?.display_name}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{auth.user?.email}</p>
             </div>
           </div>
           <Button
-            className="w-full"
+            className="h-10 w-full bg-card px-2 shadow-none"
             size="sm"
-            variant="outline"
+            variant={compact ? "ghost" : "outline"}
             disabled={signingOut}
-            onClick={() => {
-              setSigningOut(true);
-              void auth
-                .logout()
-                .catch((error: unknown) => {
-                  toast.error(
-                    error instanceof Error
-                      ? error.message
-                      : "Chưa đăng xuất được. Vui lòng thử lại.",
-                  );
-                })
-                .finally(() => setSigningOut(false));
-            }}
+            aria-label={signingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+            title="Đăng xuất"
+            onClick={logout}
           >
-            {signingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+            <LogOut aria-hidden="true" />
+            <span className={label}>{signingOut ? "Đang đăng xuất…" : "Đăng xuất"}</span>
           </Button>
         </div>
-      </aside>
-      {open && (
-        <div
-          className="fixed inset-0 z-30 bg-foreground/30 lg:hidden"
-          onClick={() => setOpen(false)}
-        />
+      </>
+    );
+  };
+
+  return (
+    <div
+      ref={app}
+      className={cn(
+        "min-h-[100dvh] bg-background",
+        learning && "learning-theme learning-app min-h-0 overflow-hidden",
       )}
-      <div className="lg:pl-64">
-        <header className="lg:hidden h-14 border-b bg-card flex items-center px-4 gap-3 sticky top-0 z-20">
-          <button onClick={() => setOpen(true)} aria-label="Mở menu">
-            <Menu className="h-5 w-5" />
-          </button>
-          <p className="font-semibold text-sm">
+    >
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-card focus:p-3 focus:text-primary"
+      >
+        Đến nội dung chính
+      </a>
+      <aside
+        aria-label="Thanh điều hướng"
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 hidden flex-col border-r bg-sidebar",
+          learning ? (collapsed ? "w-16 md:flex" : "w-16 md:flex xl:w-[232px]") : "w-64 lg:flex",
+        )}
+      >
+        {sidebar()}
+      </aside>
+      <div
+        className={cn(
+          learning ? "flex h-full min-h-0 flex-col md:pl-16" : "lg:pl-64",
+          learning && !collapsed && "xl:pl-[232px]",
+        )}
+      >
+        <header
+          className={cn(
+            "learning-mobile-header sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-card px-4",
+            learning ? "md:hidden" : "lg:hidden",
+          )}
+        >
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <Button size="icon" variant="ghost" className="size-11" aria-label="Mở menu">
+                <Menu aria-hidden="true" className="size-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side="left"
+              className={cn(
+                "flex w-72 max-w-[calc(100%-32px)] flex-col gap-0 bg-sidebar p-0 motion-reduce:animate-none motion-reduce:transition-none",
+                learning && "learning-theme",
+              )}
+            >
+              <SheetTitle className="sr-only">Menu SocraVăn</SheetTitle>
+              <SheetDescription className="sr-only">Điều hướng không gian tự học</SheetDescription>
+              {sidebar(true)}
+            </SheetContent>
+          </Sheet>
+          <p className="text-sm font-semibold">
             Socra<span className="text-primary">Văn</span>
           </p>
         </header>
-        <main>{children}</main>
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className={learning ? "min-h-0 flex-1 overflow-hidden" : undefined}
+        >
+          {children}
+        </main>
       </div>
     </div>
   );

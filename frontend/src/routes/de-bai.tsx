@@ -1,213 +1,207 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { BookOpen, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
-import { FileUp, FileText, ArrowRight } from "lucide-react";
-import { PageHeader, Panel, BloomBadge } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
-import { ApiState } from "@/components/ApiState";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { ApiState } from "@/components/ApiState";
+import { AssignmentCard, AssignmentListSkeleton } from "@/components/assignments/AssignmentCard";
+import { assignmentStates, getAssignmentState } from "@/components/assignments/assignment-state";
+import { CreateAssignmentDialog } from "@/components/assignments/CreateAssignmentDialog";
+import { api, type Assignment } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { seo } from "@/lib/seo";
-import { BLOOM } from "@/lib/data";
 
 export const Route = createFileRoute("/de-bai")({
-  head: () =>
-    seo("Đề bài của tôi", "Tải lên hoặc nhập đề Ngữ văn của bạn để tự học cùng gia sư Socratic."),
+  head: () => seo("Đề bài của tôi", "Lưu đề Ngữ văn và tự học cùng gia sư Socratic."),
   component: Page,
 });
 
 function Page() {
-  const [file, setFile] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [documentId, setDocumentId] = useState<string | undefined>();
-  const [target, setTarget] = useState(4);
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+  const createButton = useRef<HTMLButtonElement>(null);
   const query = useQuery({ queryKey: ["assignments"], queryFn: api.assignments });
   const client = useQueryClient();
   const navigate = useNavigate();
-  const upload = async (selected?: File) => {
-    if (!selected || busy) return;
-    if (selected.size > 10 * 1024 * 1024) {
-      toast.error("Tệp vượt quá 10MB");
-      return;
-    }
-    setBusy(true);
-    try {
-      const result = await api.extract(selected);
-      setFile(result.filename);
-      setTitle(result.title);
-      setText(result.text);
-      setDocumentId(result.document_id);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không đọc được tệp");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const confirm = async () => {
-    if (busy || title.trim().length < 5 || text.trim().length < 15) return;
-    setBusy(true);
-    try {
-      const result = await api.createAssignment({
-        title: title.trim(),
-        prompt: text.trim(),
-        target,
-        ...(documentId ? { document_id: documentId } : {}),
-      });
-      await client.invalidateQueries({ queryKey: ["assignments"] });
-      await navigate({ to: "/phien-hoc", search: { assignment: result.id } });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không lưu được đề bài");
-    } finally {
-      setBusy(false);
+  const assignments = query.data ?? [];
+  const normalize = (value: string) =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .toLocaleLowerCase("vi");
+  const visible = assignments.filter(
+    (assignment) =>
+      (filter === "all" || getAssignmentState(assignment).key === filter) &&
+      normalize(assignment.title).includes(normalize(search.trim())),
+  );
+  const filters = [{ key: "all", label: "Tất cả" }, ...assignmentStates];
+
+  const onCreated = (assignment: Assignment, start: boolean) => {
+    client.setQueryData<Assignment[]>(["assignments"], (previous = []) => [
+      assignment,
+      ...previous.filter((item) => item.id !== assignment.id),
+    ]);
+    void client.invalidateQueries({ queryKey: ["assignments"] });
+    void client.invalidateQueries({ queryKey: ["dashboard"] });
+    if (start) {
+      void navigate({ to: "/phien-hoc", search: { assignment: assignment.id } }).catch(() =>
+        toast.error("Đề đã lưu. Em có thể bấm Bắt đầu học trong danh sách để thử lại."),
+      );
+    } else {
+      setSearch("");
+      setFilter("all");
     }
   };
+
   return (
-    <>
-      <PageHeader
-        eyebrow="Học sinh"
-        title="Đề bài của tôi"
-        desc="Tải lên hoặc nhập đề riêng, kiểm tra nội dung và bắt đầu tự học."
-      />
-      <div className="p-6 lg:p-10 grid gap-6 xl:grid-cols-3">
-        <div className="xl:col-span-2 space-y-4">
-          {query.isPending || query.error ? (
-            <ApiState loading={query.isPending} error={query.error} retry={query.refetch} />
-          ) : query.data?.length === 0 ? (
-            <Panel title="Chưa có đề tự học">
-              <p className="text-sm text-muted-foreground">
-                Thêm đề đầu tiên bằng cách tải tệp hoặc nhập nội dung trong biểu mẫu bên cạnh. Đề
-                chỉ được lưu sau khi bạn xác nhận nội dung.
-              </p>
-            </Panel>
-          ) : (
-            query.data?.map((a) => (
-              <Panel key={a.id}>
-                <div className="flex flex-col md:flex-row gap-5">
-                  <div className="flex-1">
-                    <p className="text-xs text-muted-foreground">Đề tự học của bạn</p>
-                    <h3 className="font-semibold mt-1">{a.title}</h3>
-                    <p className="text-sm text-foreground/80 mt-2">{a.prompt}</p>
-                    <div className="mt-3 flex items-center gap-2 text-xs">
-                      <span className="text-muted-foreground">Mục tiêu</span>
-                      <BloomBadge level={a.target} />
-                    </div>
-                  </div>
-                  <div className="flex md:flex-col items-center md:items-end justify-between gap-3">
-                    <span className="text-xs rounded-full bg-muted px-2.5 py-1">{a.status}</span>
-                    <Button
-                      asChild
-                      variant={a.status === "Đã hoàn thành" ? "outline" : "default"}
-                      size="sm"
-                    >
-                      <Link to="/phien-hoc" search={{ assignment: a.id }}>
-                        {a.status === "Đã hoàn thành" ? "Xem lại phiên học" : "Học với gia sư"}{" "}
-                        <ArrowRight />
-                      </Link>
-                    </Button>
-                  </div>
-                </div>
-              </Panel>
-            ))
+    <div className="assignment-page p-4 sm:p-6 lg:p-10">
+      <header className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-[28px]">Đề bài của tôi</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            Chọn một đề bài, bắt đầu từ suy nghĩ của em.
+          </p>
+        </div>
+        <Button
+          ref={createButton}
+          className="h-11 shrink-0 shadow-none"
+          onClick={() => setOpen(true)}
+        >
+          <Plus aria-hidden="true" /> Tạo đề bài
+        </Button>
+      </header>
+
+      <section className="mt-8" aria-label="Danh sách đề bài">
+        <div className="relative">
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            type="search"
+            aria-label="Tìm kiếm theo tên đề bài"
+            placeholder="Tìm kiếm theo tên đề bài…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="h-12 rounded-lg bg-card pl-11 pr-12 shadow-none [&::-webkit-search-cancel-button]:appearance-none"
+          />
+          {search && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Xóa tìm kiếm"
+              className="absolute right-1 top-1 h-10 w-10"
+              onClick={() => setSearch("")}
+            >
+              <X aria-hidden="true" />
+            </Button>
           )}
         </div>
-        <Panel title="Thêm đề tự học">
-          <label
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              void upload(e.dataTransfer.files[0]);
-            }}
-            className="flex flex-col items-center justify-center text-center border border-dashed rounded-lg py-10 px-4 cursor-pointer hover:bg-muted/50"
-          >
-            <FileUp className="h-6 w-6 text-primary mb-3" />
-            <span className="text-sm font-medium">
-              {busy ? "Đang xử lý…" : "Kéo thả hoặc chọn tệp"}
-            </span>
-            <span className="text-xs text-muted-foreground mt-1">
-              PDF có chữ, DOCX, TXT · tối đa 10MB
-            </span>
-            <input
-              aria-label="Chọn tệp đề bài"
-              disabled={busy}
-              type="file"
-              className="hidden"
-              accept=".pdf,.docx,.txt"
-              onChange={(e) => {
-                void upload(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-          </label>
-          {file && (
-            <div className="mt-4 rounded-md border p-3 text-sm">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-secondary" />
-                <span className="truncate">{file}</span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Đã trích xuất văn bản. Em hãy kiểm tra và chỉnh sửa bên dưới trước khi bắt đầu.
-              </p>
-            </div>
-          )}
-          <form
-            className="mt-4 space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void confirm();
-            }}
-          >
-            <label className="block text-sm font-medium">
-              Tên đề
-              <Input
-                className="mt-1.5"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Nhập tên đề (ít nhất 5 ký tự)"
-                maxLength={300}
-              />
-            </label>
-            <label className="block text-sm font-medium">
-              Nội dung đề
-              <Textarea
-                className="mt-1.5 min-h-40"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Nhập đề trực tiếp hoặc kiểm tra văn bản từ tệp…"
-                maxLength={30000}
-              />
-            </label>
-            <label className="block text-sm font-medium">
-              Mục tiêu luyện tập
-              <select
-                className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                value={target}
-                onChange={(event) => setTarget(Number(event.target.value))}
-              >
-                {BLOOM.map((bloom) => (
-                  <option key={bloom.level} value={bloom.level}>
-                    Bloom {bloom.level} · {bloom.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <Button
-              className="w-full"
-              type="submit"
-              disabled={busy || title.trim().length < 5 || text.trim().length < 15}
-            >
-              {busy ? "Đang xử lý…" : "Xác nhận đề & bắt đầu học"}
-            </Button>
-          </form>
-          <div className="mt-6 text-xs text-muted-foreground leading-relaxed">
-            Bạn chọn mục tiêu luyện tập cho từng đề. Gia sư hiện đặt câu hỏi theo kịch bản; chưa hỗ
-            trợ OCR ảnh chụp hoặc tự phân tích đề bằng AI.
+        <div className="my-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Lọc theo trạng thái">
+            {filters.map((item) => {
+              const count =
+                item.key === "all"
+                  ? assignments.length
+                  : assignments.filter(
+                      (assignment) => getAssignmentState(assignment).key === item.key,
+                    ).length;
+              return (
+                <Button
+                  key={item.key}
+                  variant="ghost"
+                  aria-pressed={filter === item.key}
+                  onClick={() => setFilter(item.key)}
+                  className={cn(
+                    "h-10 gap-2 border px-3 shadow-none sm:px-4",
+                    filter === item.key
+                      ? "border-primary/25 bg-primary-soft text-primary hover:bg-primary-soft"
+                      : "border-transparent text-muted-foreground hover:bg-card",
+                  )}
+                >
+                  {item.label}
+                  <span
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-xs tabular-nums",
+                      filter === item.key ? "bg-primary/10" : "bg-muted",
+                    )}
+                  >
+                    {query.isPending || query.isError ? "…" : count}
+                  </span>
+                </Button>
+              );
+            })}
           </div>
-        </Panel>
-      </div>
-    </>
+          {!query.isPending && !query.isError && (
+            <p role="status" className="text-xs text-muted-foreground">
+              {visible.length} đề bài{query.isFetching ? " · Đang cập nhật…" : ""}
+            </p>
+          )}
+        </div>
+
+        {query.isPending ? (
+          <AssignmentListSkeleton />
+        ) : query.isError ? (
+          <div className="rounded-lg border bg-card">
+            <ApiState error={query.error} retry={query.refetch} />
+          </div>
+        ) : assignments.length === 0 ? (
+          <div className="flex min-h-80 flex-col items-center justify-center rounded-xl border bg-card px-6 py-12 text-center">
+            <div className="mb-5 grid size-14 place-items-center rounded-xl bg-primary-soft text-primary">
+              <BookOpen aria-hidden="true" className="size-6" />
+            </div>
+            <h2 className="text-lg font-semibold">Bắt đầu với đề bài đầu tiên</h2>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+              Nhập đề hoặc tải tài liệu lên. Gia sư sẽ cùng em khám phá từng ý qua những câu hỏi gợi
+              mở.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-6 h-11 bg-card shadow-none"
+              onClick={() => setOpen(true)}
+            >
+              <Plus aria-hidden="true" /> Tạo đề bài đầu tiên
+            </Button>
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="rounded-xl border bg-card px-6 py-14 text-center">
+            <Search aria-hidden="true" className="mx-auto mb-4 size-6 text-muted-foreground" />
+            <h2 className="font-semibold">Không tìm thấy đề bài phù hợp</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Thử tên đề khác hoặc chọn lại trạng thái.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-5 h-11 bg-card shadow-none"
+              onClick={() => {
+                setSearch("");
+                setFilter("all");
+              }}
+            >
+              Xóa bộ lọc
+            </Button>
+          </div>
+        ) : (
+          <ul className="space-y-4">
+            {visible.map((assignment) => (
+              <li key={assignment.id}>
+                <AssignmentCard assignment={assignment} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <CreateAssignmentDialog
+        open={open}
+        onOpenChange={setOpen}
+        onCreated={onCreated}
+        triggerRef={createButton}
+      />
+    </div>
   );
 }

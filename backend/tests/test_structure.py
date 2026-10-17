@@ -76,6 +76,18 @@ def test_ocr_section_prefix_keeps_reading_and_writing_parts_separate():
     assert result["parts"][0]["title"].startswith("1L ĐỌC")
 
 
+def test_numbered_reference_document_is_not_treated_as_exam_footnotes():
+    text = "Tài liệu về khí hậu\n1. Nguyên nhân\nNhiệt độ tăng trên toàn cầu.\n2. Tác động\nMực nước biển dâng."
+    result = structure_text(text)
+    question = result["parts"][0]["questions"][0]
+    assert "1. Nguyên nhân" in question["context"]
+    assert "2. Tác động" in question["context"]
+    assert result["footnotes"] == []
+    assert [paragraph["text"].splitlines()[0] for paragraph in question["paragraphs"]] == [
+        "Tài liệu về khí hậu", "1. Nguyên nhân", "2. Tác động",
+    ]
+
+
 def test_ocr_question_five_marker_inside_previous_question_line():
     text = ("I. ĐỌC HIỂU (4,0 điểm)\n"
             "Câu 4. Nhận xét về mồi liên hệ giữa luận đề và các luận điểm trong văn bản. "

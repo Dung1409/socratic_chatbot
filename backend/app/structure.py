@@ -25,6 +25,7 @@ IDEA = re.compile(r"^\s*(?:\(([a-h])\)|([a-h])[.)])\s+(.+)$", re.IGNORECASE)
 ANSWER_KEY = re.compile(r"^\s*(?:ĐÁP ÁN|HƯỚNG DẪN CHẤM|GỢI Ý ĐÁP ÁN|THANG ĐIỂM)\b", re.IGNORECASE)
 PAGE_NUMBER = re.compile(r"[:;.,\-–]?\s*(?:trang|page)\s*(\d{1,3})(?:\s*(?:/|trên|of)\s*\d{1,3})?\s*$", re.IGNORECASE)
 NUMBERED_PARAGRAPH = re.compile(r"^\s*\((\d{1,2})\)\s+")
+NUMBERED_HEADING = re.compile(r"^\s*\d{1,3}[.)]\s+")
 PARAGRAPH_REFERENCE = re.compile(r"\bDOAN\s*\(?\s*(\d{1,2})\s*\)?")
 FOOTNOTE = re.compile(r"^\s*([1-9¹²³!])(?:[.)])?\s+(.+)$")
 
@@ -97,7 +98,7 @@ def _paragraphs(lines, prefix):
                                    "text": _text(group), "source_pages": _pages(group)})
                 group = []
         else:
-            if group and NUMBERED_PARAGRAPH.match(line["text"]):
+            if group and (NUMBERED_PARAGRAPH.match(line["text"]) or NUMBERED_HEADING.match(line["text"])):
                 paragraphs.append({"id": f"{prefix}-paragraph-{len(paragraphs) + 1}",
                                    "text": _text(group), "source_pages": _pages(group)})
                 group = []
@@ -207,7 +208,12 @@ def structure_text(text: str, pages: list | None = None) -> dict:
     repeated = _repeated_edges(pages)
     printed_pages = _printed_page_lines(pages)
     source_lines = list(_question_source_lines(_source_lines(text, pages)))
-    footnotes, footnote_lines = _extract_footnotes(source_lines)
+    # Numbered headings and lists are ordinary content in reference documents.
+    # Apply exam-only exclusions only when both an exam heading and questions exist.
+    exam_layout = (any(_is_section(line["text"]) or _is_exam_header(line["text"])
+                       for line in source_lines)
+                   and any(QUESTION.match(line["text"]) for line in source_lines))
+    footnotes, footnote_lines = _extract_footnotes(source_lines) if exam_layout else ([], set())
     current_part = None
     current_question = None
     current_idea = None
@@ -229,7 +235,7 @@ def structure_text(text: str, pages: list | None = None) -> dict:
             if stripped:
                 excluded.append({**line, "reason": "after_end"})
             continue
-        if ANSWER_KEY.match(stripped) or _is_end_marker(stripped):
+        if exam_layout and (ANSWER_KEY.match(stripped) or _is_end_marker(stripped)):
             ended = True
             excluded.append({**line, "reason": "answer_key" if ANSWER_KEY.match(stripped) else "end_marker"})
             continue
@@ -239,7 +245,7 @@ def structure_text(text: str, pages: list | None = None) -> dict:
         if (line["page"], stripped) in printed_pages or PAGE_NUMBER.fullmatch(stripped):
             excluded.append({**line, "reason": "page_number"})
             continue
-        if current_part is None and _is_exam_header(stripped):
+        if exam_layout and current_part is None and _is_exam_header(stripped):
             excluded.append({**line, "reason": "exam_header"})
             continue
         if _is_section(stripped):
@@ -283,12 +289,12 @@ def structure_text(text: str, pages: list | None = None) -> dict:
         for part in parts:
             fallback.append({"text": part["title"], "page": None})
             fallback.extend(part["_context"])
-        parts = [{"id": "part-1", "title": "Đề bài", "_context": [], "questions": [
+        parts = [{"id": "part-1", "title": "Đề bài" if exam_layout else "Tài liệu", "_context": [], "questions": [
             {"id": "part-1-question-1", "label": "Nội dung chưa tách được",
-             "_stem": fallback, "_body": [], "ideas": []}
+             "_stem": fallback[:1], "_body": fallback[1:], "ideas": []}
         ]}]
         global_lines = []
-        warnings.append("Chưa nhận diện được nhãn câu hỏi; cần kiểm tra và chỉnh sửa trước khi học.")
+        warnings.append("Không thấy câu hỏi tường minh; đã giữ nguyên toàn bộ nội dung tài liệu.")
 
     global_context = _text(global_lines)
     for part in parts:
@@ -301,7 +307,10 @@ def structure_text(text: str, pages: list | None = None) -> dict:
             body = question.pop("_body")
             question["stem"] = _text(stem)
             question["text"] = _text([*stem[:1], *body])
-            question["task"], question["materials"] = _split_question_content(part["title"], question["text"])
+            if question["label"] == "Nội dung chưa tách được":
+                question["task"], question["materials"] = "", question["text"]
+            else:
+                question["task"], question["materials"] = _split_question_content(part["title"], question["text"])
             question["source_pages"] = _pages([*stem, *body])
             question["paragraphs"] = _paragraphs([*stem[:1], *body], question["id"])
             question["source_selection"] = _source_selection(part, question["text"])[1]
@@ -363,6 +372,9 @@ def question_context(global_context: str, part: dict, question: dict) -> str:
                       for note in question.get("footnotes", []))
     materials = question.get("materials", "").strip()
     task = question.get("task", question["text"]).strip()
+    if question["label"] == "Nội dung chưa tách được":
+        return "\n\n".join(value for value in [*_shared_context(global_context, part, question["text"]),
+                                             f"Nội dung tài liệu:\n{materials}"] if value)
     return "\n\n".join(value for value in [*_shared_context(global_context, part, question["text"]),
                                       f"{question['label']} — Yêu cầu: {task}",
                                       f"Ngữ liệu đi kèm:\n{materials}" if materials else "", notes] if value)

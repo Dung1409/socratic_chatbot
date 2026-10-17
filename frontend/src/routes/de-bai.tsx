@@ -13,7 +13,7 @@ import { seo } from "@/lib/seo";
 
 export const Route = createFileRoute("/de-bai")({
   head: () =>
-    seo("Đề bài của tôi", "Tải đề bài Ngữ văn và bắt đầu phiên học cùng gia sư Socratic."),
+    seo("Tài liệu của tôi", "Tải đề bài hoặc tài liệu học tập và bắt đầu phiên học cùng gia sư Socratic."),
   component: Page,
 });
 
@@ -223,14 +223,14 @@ function Page() {
     <>
       <PageHeader
         eyebrow="Học sinh"
-        title="Đề bài của tôi"
-        desc="Tải bộ đề của em lên, kiểm tra các câu được tách ra rồi chọn câu muốn học."
+        title="Tài liệu của tôi"
+        desc="Tải đề bài hoặc tài liệu học tập lên. Nếu không có câu hỏi tường minh, nội dung vẫn được giữ nguyên."
       />
       <div className="p-6 lg:p-10 grid gap-6 xl:grid-cols-3">
-        <Panel title="Tải đề bài lên" className="xl:col-span-3">
+        <Panel title="Tải tài liệu lên" className="xl:col-span-3">
           <details open={!structure} className="rounded-lg border bg-background p-3">
             <summary className="cursor-pointer text-sm font-semibold focus-visible:outline-2 focus-visible:outline-primary">
-              {structure ? "Đổi đề đã tải lên" : "Bước 1 · Tải đề hoặc nhập văn bản"}
+              {structure ? "Đổi tài liệu đã tải lên" : "Bước 1 · Tải tài liệu hoặc nhập văn bản"}
             </summary>
             <div
               onDragOver={(e) => e.preventDefault()}
@@ -246,7 +246,7 @@ function Page() {
             </span>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <Button type="button" disabled={busy} onClick={() => imageInput.current?.click()}>
-                Chọn ảnh đề bài
+                Chọn ảnh tài liệu
               </Button>
               <Button type="button" variant="outline" disabled={busy}
                 onClick={() => documentInput.current?.click()}>
@@ -258,7 +258,7 @@ function Page() {
             </span>
             <input
               ref={imageInput}
-              aria-label="Chọn ảnh đề bài"
+              aria-label="Chọn ảnh tài liệu"
               disabled={busy}
               type="file"
               multiple
@@ -415,7 +415,7 @@ function Page() {
                                   <span>{question.label}</span>
                                   {question.points && <span className="text-xs font-medium text-muted-foreground">{question.points}</span>}
                                 </span>
-                                <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted-foreground">{formatProse(question.task ?? question.text)}</span>
+                                <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted-foreground">{formatProse(question.task || question.text)}</span>
                                 {question.materials && <span className="mt-2 inline-block rounded bg-background/80 px-2 py-0.5 text-[11px] font-medium text-primary">Có ngữ liệu riêng</span>}
                               </button>
                             );
@@ -436,10 +436,14 @@ function Page() {
                           {selectedQuestion.source_pages.length > 0 && <span className="rounded-full border px-2.5 py-1">Trang/ảnh {selectedQuestion.source_pages.join(", ")}</span>}
                         </div>
                       </header>
-                      <section aria-label="Yêu cầu của câu hỏi" className="rounded-lg border border-primary/30 bg-primary/5 p-4 sm:p-5">
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-primary">01 · Yêu cầu cần làm</h4>
-                        <p className="mt-3 max-w-prose whitespace-pre-wrap text-base font-medium leading-7 text-foreground">{formatProse(selectedQuestion.task ?? selectedQuestion.text)}</p>
-                      </section>
+                      {selectedQuestion.task ? (
+                        <section aria-label="Yêu cầu của câu hỏi" className="rounded-lg border border-primary/30 bg-primary/5 p-4 sm:p-5">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-primary">01 · Yêu cầu cần làm</h4>
+                          <p className="mt-3 max-w-prose whitespace-pre-wrap text-base font-medium leading-7 text-foreground">{formatProse(selectedQuestion.task)}</p>
+                        </section>
+                      ) : (
+                        <p className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">Tài liệu này không có câu hỏi tường minh. Nội dung gốc được giữ nguyên bên dưới để em đọc và đặt câu hỏi học tập.</p>
+                      )}
                       {selectedIdea && (
                         <section className="rounded-lg border border-primary/30 p-4" aria-label="Ý nhỏ đang chọn">
                           <h4 className="text-xs font-bold uppercase tracking-wider text-primary">Ý {selectedIdea.label} đang chọn</h4>
@@ -448,8 +452,8 @@ function Page() {
                       )}
                       {selectedQuestion.materials && (
                         <section aria-label="Ngữ liệu đi kèm" className="rounded-lg border bg-muted/30 p-4 sm:p-5">
-                          <h4 className="text-xs font-bold uppercase tracking-wider text-foreground/70">02 · Ngữ liệu đi kèm</h4>
-                          <p className="mt-1 text-xs text-muted-foreground">Dùng để phân tích hoặc làm dẫn chứng; đây không phải yêu cầu cần trả lời.</p>
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-foreground/70">{selectedQuestion.task ? "02 · Ngữ liệu đi kèm" : "Nội dung tài liệu"}</h4>
+                          {selectedQuestion.task && <p className="mt-1 text-xs text-muted-foreground">Dùng để phân tích hoặc làm dẫn chứng; đây không phải yêu cầu cần trả lời.</p>}
                           <div className="mt-4 max-h-[32rem] overflow-y-auto rounded-md border bg-background p-4" tabIndex={0} aria-label="Nội dung ngữ liệu riêng">
                             <p className="max-w-prose whitespace-pre-wrap text-sm leading-7">{selectedQuestion.materials}</p>
                           </div>

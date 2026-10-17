@@ -69,22 +69,35 @@ def _image(data: bytes):
         raise ExtractionError("Không đọc được ảnh; hãy kiểm tra định dạng hoặc chụp lại") from exc
 
 
+def _prepare_ocr_image(image):
+    """Create a stable OCR view without changing the stored upload.
+
+    The order is deliberate: remove colour, upscale small scans, suppress
+    speckle noise, normalize the page range, then apply a restrained sharpen.
+    We keep grayscale instead of hard thresholding so Vietnamese tone marks
+    are not erased.
+    """
+    from PIL import ImageEnhance, ImageFilter, ImageOps
+
+    prepared = ImageOps.grayscale(image)
+    if prepared.width < 2200:
+        scale = min(2.0, 2200 / max(prepared.width, 1))
+        prepared = prepared.resize((round(prepared.width * scale), round(prepared.height * scale)))
+    prepared = prepared.filter(ImageFilter.MedianFilter(size=3))
+    prepared = ImageOps.autocontrast(prepared, cutoff=1)
+    prepared = ImageEnhance.Contrast(prepared).enhance(1.25)
+    return prepared.filter(ImageFilter.UnsharpMask(radius=1.2, percent=140, threshold=3))
+
+
 def _ocr_image(image) -> tuple[str, float | None]:
     import pytesseract
-    from PIL import ImageEnhance, ImageFilter, ImageOps
+    from PIL import ImageEnhance, ImageOps
     from pytesseract import Output
 
     if os.getenv("OCR_TESSERACT_CMD"):
         pytesseract.pytesseract.tesseract_cmd = os.environ["OCR_TESSERACT_CMD"]
 
-    # Normalize common phone scans before OCR. Upscaling and local contrast
-    # improve Vietnamese diacritics without changing the stored source image.
-    prepared = ImageOps.grayscale(image)
-    if prepared.width < 2200:
-        scale = min(2.0, 2200 / max(prepared.width, 1))
-        prepared = prepared.resize((round(prepared.width * scale), round(prepared.height * scale)))
-    prepared = ImageEnhance.Contrast(prepared).enhance(1.35)
-    prepared = prepared.filter(ImageFilter.SHARPEN)
+    prepared = _prepare_ocr_image(image)
 
     try:
         words = pytesseract.image_to_data(

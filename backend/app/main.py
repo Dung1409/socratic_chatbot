@@ -420,6 +420,8 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             item = db.execute(conn, """SELECT id, label, prompt, context, item_type
                 FROM assignment_items WHERE id=? AND assignment_id=?""",
                               (body.item_id, assignment_id)).fetchone()
+            all_items = [dict(row) for row in db.execute(conn, """SELECT id, label, prompt, context, item_type
+                FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (assignment_id,)).fetchall()]
             if item is None:
                 raise HTTPException(404, "Không tìm thấy câu hỏi đã chọn")
             # Each selected question has an independent Socratic conversation.
@@ -427,6 +429,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             for candidate in saved_sessions(conn, user.id):
                 if candidate.get("assignment_id") == assignment_id and \
                         (candidate.get("assignment") or {}).get("active_item_id") == item["id"]:
+                    candidate.setdefault("assignment", {})["items"] = all_items
                     candidate["updated_at"] = now()
                     db.put(conn, "sessions", candidate["id"], candidate, owner_id=user.id)
                     return public_session(candidate)
@@ -434,6 +437,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             assignment["prompt"] = item["prompt"]
             assignment["task_type"] = item["item_type"] if item["item_type"] in {"reading", "social"} else "social"
             assignment["active_item_id"] = item["id"]
+            assignment["items"] = all_items
             steps = lesson_steps(assignment)
             selected_session = {
                 "id": str(uuid4()), "assignment_id": assignment_id, "assignment": assignment,

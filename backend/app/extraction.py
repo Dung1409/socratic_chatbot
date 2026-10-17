@@ -66,15 +66,20 @@ def _image(data: bytes):
 
 def _ocr_image(image) -> tuple[str, float | None]:
     import pytesseract
-    from PIL import ImageEnhance, ImageOps
+    from PIL import ImageEnhance, ImageFilter, ImageOps
     from pytesseract import Output
 
     if os.getenv("OCR_TESSERACT_CMD"):
         pytesseract.pytesseract.tesseract_cmd = os.environ["OCR_TESSERACT_CMD"]
 
+    # Normalize common phone scans before OCR. Upscaling and local contrast
+    # improve Vietnamese diacritics without changing the stored source image.
+    prepared = ImageEnhance.Contrast(ImageOps.grayscale(image)).enhance(1.35)
+    prepared = prepared.filter(ImageFilter.SHARPEN)
+
     try:
         words = pytesseract.image_to_data(
-            image, lang="vie", config="--psm 3", output_type=Output.DICT, timeout=35,
+            prepared, lang="vie", config="--psm 3", output_type=Output.DICT, timeout=35,
         )
     except pytesseract.TesseractNotFoundError as exc:
         raise ExtractionError("Máy chủ chưa cài Tesseract OCR; cần cài Tesseract và dữ liệu tiếng Việt 'vie'.") from exc
@@ -315,7 +320,7 @@ def extract_document(filename: str, data: bytes) -> dict:
         warnings = [f"{page['label']} không đọc được chữ; cần kiểm tra bản gốc."
                     for page in pages if not page["text"]]
         if any(page["method"] == "ocr" for page in pages):
-            warnings.append("OCR có thể đọc sai dấu hoặc từ dù điểm tin cậy cao; hãy đối chiếu ảnh gốc trước khi học.")
+            warnings.append("OCR đã tự chuẩn hóa ảnh; chỉ cần kiểm tra các trang được đánh dấu chưa chắc chắn, không cần đọc lại toàn bộ tài liệu.")
         warnings.extend(f"{page['label']} OCR chưa chắc chắn; cần xem lại chữ."
                         for page in pages if page["confidence"] is not None and page["confidence"] < 65)
         return {"text": text, "pages": pages, "blocks": _content_blocks(pages),

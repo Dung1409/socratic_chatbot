@@ -40,7 +40,9 @@ jobs:
 
   deploy:
     needs: verify
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    # The connected Vercel Git integration deploys by default. Enable CLI deploy only
+    # after adding all three credentials and disabling Vercel's Git auto-deploy.
+    if: vars.VERCEL_CLI_DEPLOY == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

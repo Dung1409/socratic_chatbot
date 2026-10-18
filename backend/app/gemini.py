@@ -103,7 +103,7 @@ def _request(batch: list[dict]) -> tuple[dict[str, dict], list[dict]]:
                       "Content-Type": "application/json"}, method="POST")
     for attempt in range(3):
         try:
-            with urlopen(request, timeout=110) as response:
+            with urlopen(request, timeout=int(os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "30"))) as response:
                 payload = json.load(response)
             raw = "".join(part.get("text", "") for part in payload["candidates"][0]["content"]["parts"])
             parsed = json.loads(raw)

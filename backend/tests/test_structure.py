@@ -1,6 +1,39 @@
 from backend.app.structure import question_context, structure_text
 
 
+def test_single_task_keeps_the_request_without_a_question_number():
+    text = "Hãy phân tích vai trò của dẫn chứng trong bài nghị luận."
+    result = structure_text(text, mode="single")
+    question = result["parts"][0]["questions"][0]
+    assert question["task"] == text
+    assert question["context"].count(text) == 1
+    assert not question.get("source_only")
+    reference = structure_text(text, mode="reference")["parts"][0]["questions"][0]
+    assert reference["source_only"] is True
+    assert reference["materials"] == text
+
+
+def test_answer_key_is_excluded_even_without_exam_headings():
+    for mode in ("auto", "single", "reference"):
+        result = structure_text("Câu 1. Phân tích ý nghĩa của việc đọc sách.\nĐÁP ÁN\nSECRET_ANSWER", mode=mode)
+        assert "SECRET_ANSWER" not in result["parts"][0]["questions"][0]["context"]
+        assert any(line["text"] == "SECRET_ANSWER" for line in result["excluded"])
+
+
+def test_repeated_task_in_answer_key_does_not_remove_the_original_task():
+    task = "Hãy phân tích ý nghĩa của việc đọc sách."
+    result = structure_text(f"{task}\nĐÁP ÁN\n{task}\nLời giải mẫu.", mode="single")
+    assert result["parts"][0]["questions"][0]["task"] == task
+
+
+def test_answer_key_cannot_be_consumed_as_a_footnote_continuation():
+    text = "I. ĐỌC HIỂU\nMột nguồn ngữ liệu.\nCâu 1. Phân tích nội dung của văn bản.\n1 Chú thích tác giả.\nĐÁP ÁN\nSECRET_ANSWER"
+    result = structure_text(text)
+    assert any(line["reason"] == "answer_key" for line in result["excluded"])
+    assert all("SECRET_ANSWER" not in note["text"] for note in result["footnotes"])
+    assert "SECRET_ANSWER" not in result["parts"][0]["questions"][0]["context"]
+
+
 def test_parts_questions_and_shared_passage_are_kept_separate():
     text = """ĐỀ KIỂM TRA NGỮ VĂN
 PHẦN I. ĐỌC HIỂU

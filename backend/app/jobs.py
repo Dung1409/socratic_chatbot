@@ -1,6 +1,8 @@
 import hashlib
+import io
 import json
 import time
+import zipfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,6 +25,21 @@ class JobQueue:
 
     def submit(self, filename: str, data: bytes, owner_id=None):
         validate_upload(filename, data)
+        return self._submit(filename, data, owner_id)
+
+    def submit_images(self, files: list[tuple[str, bytes]], owner_id=None):
+        if not 1 <= len(files) <= 12:
+            raise ValueError("Cần từ 1 đến 12 ảnh")
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as archive:
+            for index, (filename, data) in enumerate(files, 1):
+                validate_upload(filename, data)
+                if Path(filename).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+                    raise ValueError("Bộ ảnh chỉ nhận ảnh PNG, JPG/JPEG hoặc WEBP")
+                archive.writestr(f"{index:02d}{Path(filename).suffix.lower()}", data)
+        return self._submit(f"Tài liệu từ {len(files)} ảnh.imagebatch", stream.getvalue(), owner_id)
+
+    def _submit(self, filename: str, data: bytes, owner_id):
         document_id, job_id = str(uuid4()), str(uuid4())
         storage_key = f"{document_id}{Path(filename).suffix.lower()}"
         self.storage_path.mkdir(parents=True, exist_ok=True)
@@ -46,13 +63,54 @@ class JobQueue:
             raise
         return {"document_id": document_id, "job_id": job_id, "status": "uploaded"}
 
+    def complete(self, document_id, result):
+        """Complete a newly submitted document in local synchronous mode."""
+        with self.db.connect(write=True) as conn:
+            self.db.execute(conn, """UPDATE uploaded_documents SET status='needs_review',
+                extracted_text=?, extracted_pages=?, extraction_warnings=?, updated_at=? WHERE id=?""",
+                (result["text"], json.dumps(result["pages"], ensure_ascii=False),
+                 json.dumps(result["warnings"], ensure_ascii=False), time.time(), document_id))
+            self.db.execute(conn, "UPDATE jobs SET status='completed', updated_at=? WHERE document_id=?",
+                            (time.time(), document_id))
+
+    def save_review(self, document_id, owner_id, review):
+        with self.db.connect(write=True) as conn:
+            cursor = self.db.execute(conn, """UPDATE uploaded_documents SET reviewed_content=?,
+                title=?, updated_at=? WHERE id=? AND owner_id=? AND status='needs_review'""",
+                (json.dumps(review, ensure_ascii=False), review["title"], time.time(), document_id, owner_id))
+            return cursor.rowcount == 1
+
+    def fail(self, document_id, error):
+        with self.db.connect(write=True) as conn:
+            self.db.execute(conn, "UPDATE uploaded_documents SET status='failed', error=?, updated_at=? WHERE id=?",
+                            (error, time.time(), document_id))
+            self.db.execute(conn, "UPDATE jobs SET status='failed', last_error=?, updated_at=? WHERE document_id=?",
+                            (error, time.time(), document_id))
+
+    def retry(self, document_id, owner_id):
+        with self.db.connect(write=True) as conn:
+            cursor = self.db.execute(conn, """UPDATE uploaded_documents SET status='uploaded', error=NULL,
+                updated_at=? WHERE id=? AND owner_id=? AND status='failed'""", (time.time(), document_id, owner_id))
+            if cursor.rowcount != 1:
+                return False
+            self.db.execute(conn, """UPDATE jobs SET status='queued', attempts=0, last_error=NULL,
+                lease_token=NULL, lease_until=NULL, available_at=?, updated_at=? WHERE document_id=?""",
+                (time.time(), time.time(), document_id))
+            return True
+
+    def original(self, document_id, owner_id):
+        with self.db.connect() as conn:
+            row = self.db.execute(conn, "SELECT storage_key, filename FROM uploaded_documents WHERE id=? AND owner_id=?",
+                                  (document_id, owner_id)).fetchone()
+        return (self.file_path(row["storage_key"]), row["filename"]) if row else None
+
     def document(self, document_id: str, owner_id=None):
         with self.db.connect() as conn:
             query = """
                 SELECT d.id AS document_id, j.id AS job_id, d.filename, d.title,
                        d.created_at, d.updated_at,
                        d.status, d.extracted_text AS text, d.extracted_pages,
-                       d.extraction_warnings, d.error, j.attempts
+                       d.extraction_warnings, d.reviewed_content, d.error, j.attempts
                 FROM uploaded_documents d JOIN jobs j ON j.document_id=d.id WHERE d.id=?
             """
             params = (document_id,)
@@ -69,6 +127,11 @@ class JobQueue:
         result["structure"] = structure_text(result["text"], result["pages"]) if result["text"] else None
         result["document_type"] = classify_document(result["text"] or "", result["filename"])
         result["subject"] = detect_subject(result["text"] or "", result["filename"])
+        review = json.loads(result.pop("reviewed_content") or "null")
+        result["review"] = review
+        if review:
+            result["text"] = review["text"]
+            result["structure"] = review["structure"]
         return result
 
     def documents(self, owner_id=None):
@@ -158,4 +221,5 @@ class JobQueue:
 
     def read_file(self, job):
         with self.file_path(job["storage_key"]).open("rb") as file:
-            return file.read(MAX_FILE_BYTES + 1)
+            limit = 12 * MAX_FILE_BYTES + 4096 if job["filename"].endswith(".imagebatch") else MAX_FILE_BYTES
+            return file.read(limit + 1)

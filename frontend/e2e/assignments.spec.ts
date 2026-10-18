@@ -1,213 +1,240 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-test("assignment modal validates, preserves drafts, saves without starting, and supports responsive study states", async ({
-  page,
-}) => {
-  test.setTimeout(120000);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+async function openInput(page: Page, upload = false) {
   await page.goto("/dang-ky");
   await page.getByLabel("Tên hiển thị").fill("Bạn học Ngữ văn");
   await page
     .getByRole("textbox", { name: "Email", exact: true })
-    .fill(`assignments-${Date.now()}@example.com`);
+    .fill(`input-${Date.now()}@example.com`);
   await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
   await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill("Strong test password 123");
+  const registration = page.waitForResponse((response) =>
+    response.url().endsWith("/api/auth/register"),
+  );
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
+  expect((await registration).status()).toBe(201);
   await expect(
     page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
   ).toBeVisible();
   await page.goto("/de-bai");
-  await expect(page.getByRole("heading", { name: "Bắt đầu với đề bài đầu tiên" })).toBeVisible();
-  const create = page.getByRole("button", { name: "Tạo đề bài", exact: true });
-  await create.click();
-  const dialog = page.getByRole("dialog", { name: "Tạo đề bài mới" });
-  const title = dialog.getByRole("textbox", { name: "Tên đề", exact: true });
-  const prompt = dialog.getByRole("textbox", { name: "Nội dung đề", exact: true });
-  await expect(title).toBeFocused();
-  await dialog.getByRole("button", { name: "Tiếp tục", exact: true }).click();
-  await expect(title).toHaveAttribute("aria-invalid", "true");
-  await expect(title).toBeFocused();
-  await expect(dialog.getByText("Nội dung đề cần ít nhất 15 ký tự.")).toBeVisible();
-  const firstTitle = "Đọc sách và suy nghĩ độc lập";
-  const firstPrompt =
-    "Phân tích vai trò của tư duy phản biện khi đọc sách và liên hệ với trải nghiệm của em.";
-  await title.fill(firstTitle);
-  await prompt.fill(firstPrompt);
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
-  await expect(create).toBeFocused();
-  await create.click();
-  await expect(title).toHaveValue(firstTitle);
-  await expect(prompt).toHaveValue(firstPrompt);
+  if (upload) await page.getByRole("tab", { name: "Tải tài liệu", exact: true }).click();
+}
 
-  const upload = dialog.getByLabel("Chọn tệp đề bài");
-  await upload.setInputFiles({
-    name: "anh.png",
-    mimeType: "image/png",
-    buffer: Buffer.from("image"),
+async function serverDocument(page: Page, text: string) {
+  const csrf = await (await page.request.get("/api/auth/csrf")).json();
+  const response = await page.request.post("/api/documents/text", {
+    headers: { "X-CSRF-Token": csrf.csrf_token },
+    data: { title: "Tài liệu kiểm thử", text, mode: "single" },
   });
-  await expect(dialog.getByRole("alert")).toContainText("PDF, DOCX hoặc TXT");
-  await upload.setInputFiles({
-    name: "lon.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.alloc(10 * 1024 * 1024 + 1),
-  });
-  await expect(dialog.getByRole("alert")).toContainText("vượt quá 10 MB");
-  await upload.setInputFiles({
-    name: "trong.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.alloc(0),
-  });
-  await expect(dialog.getByRole("alert")).toContainText("Tệp đang trống");
-  await upload.setInputFiles({
-    name: "ngu-lieu.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from(
-      "Đọc sách giúp ta mở rộng góc nhìn, nhưng cần tự suy nghĩ và kiểm chứng thông tin.",
-    ),
-  });
-  await expect(dialog.getByText("Đã trích xuất văn bản.", { exact: false })).toBeVisible();
-  await expect(title).toHaveValue(firstTitle);
-  await expect(prompt).toHaveValue(firstPrompt);
-  await dialog.getByText("Xem văn bản từ tài liệu", { exact: true }).click();
-  await dialog.getByRole("button", { name: "Dùng làm ngữ liệu" }).click();
-  await dialog.getByRole("button", { name: "Tiếp tục", exact: true }).click();
-  await dialog.getByLabel("Dạng bài").selectOption("reading");
-  await dialog.getByLabel("Khối lớp", { exact: false }).selectOption("11");
-  await expect(dialog.getByLabel("Ngữ liệu / đoạn trích liên quan")).toHaveValue(
-    /Đọc sách giúp ta/,
+  expect(response.status()).toBe(201);
+  return response.json();
+}
+
+test("pasted task starts immediately without a title or parsing step and retains its draft", async ({
+  page,
+}) => {
+  await openInput(page);
+  const prompt = "Hãy phân tích vai trò của dẫn chứng trong bài nghị luận.";
+  const materials = "Ngữ liệu đi kèm cần được giữ nguyên trong phiên học.";
+  await expect(page.getByRole("tab", { name: "Nhập đề lẻ" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
-
-  await page.route("**/api/assignments", async (route) => {
-    if (route.request().method() === "POST") {
-      await route.fulfill({ status: 503, json: { detail: "Chưa lưu được đề, vui lòng thử lại." } });
-    } else await route.continue();
-  });
-  await dialog.getByRole("button", { name: "Lưu đề bài", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toContainText("Chưa lưu được đề");
-  await expect(dialog.getByLabel("Dạng bài")).toHaveValue("reading");
-  await page.unroute("**/api/assignments");
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await page.route("**/api/assignments", async (route) => {
-    if (route.request().method() === "POST") await gate;
-    await route.continue();
-  });
-  await dialog.getByRole("button", { name: "Lưu đề bài", exact: true }).click();
-  await expect(dialog.getByRole("button", { name: "Đang lưu…", exact: true })).toBeDisabled();
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeVisible();
-  release();
-  await expect(dialog).toBeHidden();
-  await page.unroute("**/api/assignments");
-  await expect(page).toHaveURL(/\/de-bai$/);
-  await expect(
-    page.getByRole("article", { name: firstTitle }).getByRole("link", { name: "Bắt đầu học" }),
-  ).toBeVisible();
-  expect(await (await page.request.get("/api/sessions")).json()).toEqual([]);
-  expect(await (await page.request.get("/api/assignments")).json()).toHaveLength(1);
-
-  await create.click();
-  await title.fill("Nghị luận xã hội: Tài năng và nỗ lực");
-  await prompt.fill(
-    "Trình bày quan điểm về mối quan hệ giữa tài năng, nỗ lực và thành công trong cuộc sống.",
-  );
-  await dialog.getByRole("button", { name: "Tiếp tục", exact: true }).click();
-  await dialog.getByLabel("Khối lớp", { exact: false }).selectOption("12");
-  await dialog.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Nghị luận xã hội: Tài năng và nỗ lực" }),
-  ).toBeVisible();
-  const sessionsBefore = await (await page.request.get("/api/sessions")).json();
-  expect(sessionsBefore).toHaveLength(1);
-  await page.goto("/de-bai");
-  await expect(page.getByRole("link", { name: "Tiếp tục học" })).toBeVisible();
-  await page.getByRole("link", { name: "Tiếp tục học" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Nghị luận xã hội: Tài năng và nỗ lực" }),
-  ).toBeVisible();
-  expect((await (await page.request.get("/api/sessions")).json())[0].id).toBe(sessionsBefore[0].id);
-  await page.goto("/de-bai");
-
-  await page.getByRole("button", { name: "Chưa học 1", exact: true }).click();
-  await expect(page.getByRole("article")).toHaveCount(1);
-  await page.getByRole("button", { name: "Hoàn thành 0", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Không tìm thấy đề bài phù hợp" })).toBeVisible();
-  await page.getByRole("button", { name: "Xóa bộ lọc" }).click();
-  await page.getByRole("searchbox").fill("doc sach");
-  await expect(page.getByRole("article")).toHaveCount(1);
-  await expect(page.getByRole("heading", { name: firstTitle })).toBeVisible();
-  await page.getByRole("button", { name: "Xóa tìm kiếm" }).click();
-  await expect(page.getByRole("article")).toHaveCount(2);
-
-  for (const width of [320, 390, 768, 1024, 1440]) {
-    await page.setViewportSize({ width, height: width < 640 ? 700 : 900 });
-    await page.evaluate(() => document.fonts.ready);
+  await expect(page.getByRole("button", { name: "Kiểm tra đề bài" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Tên đề", exact: true })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Em muốn học đề nào?" }).fill(prompt);
+  await page.getByText("Thêm ngữ liệu", { exact: false }).click();
+  await page
+    .getByRole("textbox", { name: "Đoạn trích, bài thơ hoặc ngữ liệu liên quan" })
+    .fill(materials);
+  await page.getByRole("tab", { name: "Tải tài liệu", exact: true }).click();
+  await page.getByRole("tab", { name: "Nhập đề lẻ", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Em muốn học đề nào?" })).toHaveValue(prompt);
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Em muốn học đề nào?" })).toHaveValue(prompt);
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
     if (width === 390 || width === 1440)
-      await page.screenshot({ path: `../artifacts/assignments-${width}.png`, fullPage: true });
-    await create.click();
-    await title.fill(firstTitle);
-    await prompt.fill(firstPrompt);
-    for (const step of [1, 2]) {
-      if (step === 2) await dialog.getByRole("button", { name: "Tiếp tục", exact: true }).click();
-      const box = await dialog.boundingBox();
-      expect(box!.x).toBeGreaterThanOrEqual(0);
-      expect(box!.y).toBeGreaterThanOrEqual(0);
-      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
-      expect(box!.y + box!.height).toBeLessThanOrEqual(width < 640 ? 700 : 900);
-      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
-        true,
-      );
-      const footerAction = dialog.getByRole("button", {
-        name: step === 1 ? "Tiếp tục" : "Lưu & bắt đầu học",
-        exact: true,
-      });
-      await expect(footerAction).toBeInViewport();
-      if (width === 390 || width === 1440)
-        await page.screenshot({
-          path: `../artifacts/assignment-modal-${width}-step-${step}.png`,
-          fullPage: true,
-        });
-    }
-    await dialog.getByRole("button", { name: "Quay lại" }).click();
-    await page.keyboard.press("Escape");
-    await expect(create).toBeFocused();
-    if (width < 1024) {
-      await page.getByRole("button", { name: "Mở menu" }).click();
-      await expect(page.getByRole("dialog", { name: "Menu Trợ lý ảo AI" })).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(page.getByRole("button", { name: "Mở menu" })).toBeFocused();
-    }
+      await page.screenshot({ path: `../artifacts/quick-entry-${width}.png`, fullPage: true });
   }
-  // Delay only the read request so the real loading skeleton can be inspected.
-  let releaseRead!: () => void;
-  const readGate = new Promise<void>((resolve) => {
-    releaseRead = resolve;
+  let submits = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/learning/quick-start"))
+      submits++;
   });
-  await page.route("**/api/assignments", async (route) => {
-    await readGate;
-    await route.continue();
-  });
-  await page.reload();
-  await expect(page.getByRole("status", { name: "Đang tải đề bài" })).toBeVisible();
-  releaseRead();
-  await expect(page.getByRole("article")).toHaveCount(2);
-  await page.unroute("**/api/assignments");
-  await page.route("**/api/assignments", (route) =>
-    route.fulfill({ status: 503, json: { detail: "Tạm thời không tải được danh sách đề bài." } }),
+  const result = page.waitForResponse((response) =>
+    response.url().endsWith("/api/learning/quick-start"),
   );
+  await page.getByRole("button", { name: "Bắt đầu học", exact: true }).click();
+  const assignment = await (await result).json();
+  expect(assignment.title).toBe(prompt);
+  expect(assignment.items[0].prompt).toBe(prompt);
+  expect(assignment.items[0].context).toContain(materials);
+  await expect(page).toHaveURL(/phien-hoc\?assignment=/);
+  expect(submits).toBe(1);
+});
+
+test("text file keeps shared material after editing and reopens the reviewed version from history", async ({
+  page,
+}) => {
+  await openInput(page, true);
+  const text =
+    "I. ĐỌC HIỂU\nĐọc sách giúp chúng ta hiểu nhiều góc nhìn khác nhau.\nCâu 1. Nêu ý chính của văn bản.\nCâu 2. Em đồng tình với nhận định trên không? Vì sao?\nĐÁP ÁN\nKhông gửi lời giải này vào phiên học.";
+  await page
+    .getByLabel("Chọn tệp PDF, Word hoặc văn bản")
+    .setInputFiles({ name: "de-doc-hieu.txt", mimeType: "text/plain", buffer: Buffer.from(text) });
+  await expect(page.getByRole("region", { name: "Chọn câu để học" })).toBeVisible();
+  await expect(page.getByText("Chọn câu em muốn học.", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Cảnh báo cần kiểm tra")).toBeVisible();
+  await page.getByRole("checkbox", { name: "Chọn Câu 1", exact: true }).check();
+  await page.getByText("Chỉnh sửa tài liệu", { exact: true }).click();
+  await page.getByRole("button", { name: "Sửa bản tách" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("textbox", { name: /^Sửa yêu cầu/ })
+    .fill("Giải thích ý chính của văn bản bằng lời của em.");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Lưu thay đổi", exact: true }).click();
+  await expect(
+    page.getByText("Đã lưu bản đã kiểm tra vào lịch sử tài liệu", { exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => sessionStorage.clear());
   await page.reload();
-  await expect(page.getByRole("alert")).toContainText("Tạm thời không tải được", {
-    timeout: 15000,
+  await page.getByText(/^Lịch sử tài liệu ·/).click();
+  await page.getByRole("button", { name: "Tiếp tục với tài liệu này" }).click();
+  await expect(
+    page.getByText("Giải thích ý chính của văn bản bằng lời của em.", { exact: true }).first(),
+  ).toBeVisible();
+  const request = page.waitForRequest(
+    (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
+  );
+  await page.getByRole("button", { name: "Bắt đầu học" }).click();
+  const context = (await request).postDataJSON().items[0].context;
+  expect(context).toContain("Đọc sách giúp chúng ta hiểu nhiều góc nhìn khác nhau.");
+  expect(context).not.toContain("Không gửi lời giải này");
+});
+
+test("reordering images invalidates the previous extraction and requires reading again", async ({
+  page,
+}) => {
+  await openInput(page, true);
+  let calls = 0;
+  await page.route("**/api/uploads/extract-batch", async (route) => {
+    calls++;
+    const doc = await serverDocument(
+      page,
+      calls === 1 ? "Yêu cầu từ thứ tự ảnh ban đầu." : "Yêu cầu từ thứ tự ảnh đã thay đổi.",
+    );
+    await route.fulfill({ json: { combined: { ...doc, warnings: [] }, needs_confirmation: true } });
   });
-  await page.unroute("**/api/assignments");
-  await page.getByRole("button", { name: "Thử lại", exact: true }).click();
-  await expect(page.getByRole("article")).toHaveCount(2);
-  expect(errors).toEqual([]);
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.getByLabel("Chọn ảnh tài liệu", { exact: true }).setInputFiles([
+    { name: "first.png", mimeType: "image/png", buffer: png },
+    { name: "second.png", mimeType: "image/png", buffer: png },
+  ]);
+  await expect(page.getByRole("button", { name: /^Bắt đầu học/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Xác nhận thứ tự & đọc chữ" }).click();
+  await expect(page.getByRole("button", { name: "Bắt đầu học" })).toBeEnabled();
+  await page.getByText("Kiểm tra thứ tự trang · 2 ảnh", { exact: true }).click();
+  await page.getByRole("button", { name: "Đưa ảnh 2 lên" }).click();
+  await expect(page.getByRole("textbox", { name: "Văn bản đọc từ tài liệu" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Bắt đầu học/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Xác nhận thứ tự & đọc chữ" }).click();
+  await expect(
+    page.getByText("Yêu cầu từ thứ tự ảnh đã thay đổi.", { exact: true }).first(),
+  ).toBeVisible();
+  expect(calls).toBe(2);
+});
+
+test("reference document offers a direct choice instead of requiring a mode dropdown", async ({
+  page,
+}) => {
+  await openInput(page, true);
+  await page.getByLabel("Chọn tệp PDF, Word hoặc văn bản").setInputFiles({
+    name: "tai-lieu.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "Đọc sách mở ra nhiều góc nhìn và giúp mỗi người hiểu cuộc sống sâu sắc hơn.",
+    ),
+  });
+  await expect(page.getByRole("region", { name: "Chọn cách học tài liệu" })).toBeVisible();
+  await expect(page.getByRole("combobox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Nhập thêm yêu cầu" })).toBeVisible();
+  for (const width of [320, 390, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    if (width === 390 || width === 1440)
+      await page.screenshot({ path: `../artifacts/document-entry-${width}.png`, fullPage: true });
+  }
+  const request = page.waitForRequest(
+    (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
+  );
+  await page.getByRole("button", { name: "Học theo tài liệu", exact: true }).click();
+  expect((await request).postDataJSON().items[0].metadata.source_only).toBe(true);
+});
+
+test("a reference document can become a specific task while keeping its material", async ({
+  page,
+}) => {
+  await openInput(page, true);
+  const materials = "Đọc sách mở ra nhiều góc nhìn và giúp mỗi người hiểu cuộc sống sâu sắc hơn.";
+  await page.getByLabel("Chọn tệp PDF, Word hoặc văn bản").setInputFiles({
+    name: "ngu-lieu.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(materials),
+  });
+  await expect(
+    page.getByText("Tài liệu tham khảo · Chưa có câu hỏi", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Nhập thêm yêu cầu" }).click();
+  const prompt = "Hãy giải thích lợi ích của việc đọc sách bằng lời của em.";
+  await page
+    .getByRole("dialog")
+    .getByRole("textbox", { name: /^Sửa yêu cầu/ })
+    .fill(prompt);
+  await page.keyboard.press("Escape");
+  const request = page.waitForRequest(
+    (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
+  );
+  await page.getByRole("button", { name: "Bắt đầu học", exact: true }).click();
+  const item = (await request).postDataJSON().items[0];
+  expect(item.prompt).toBe(prompt);
+  expect(item.context).toContain(materials);
+  expect(item.metadata.source_only).toBe(false);
+});
+
+test("pending image document can be recovered after a page reload", async ({ page }) => {
+  await openInput(page, true);
+  const doc = await serverDocument(page, "Hãy phân tích vấn đề được nêu trong ảnh.");
+  let ready = false;
+  await page.route(`**/api/documents/${doc.document_id}`, async (route) => {
+    if (ready) await route.continue();
+    else
+      await route.fulfill({ json: { ...doc, text: null, structure: null, status: "processing" } });
+  });
+  await page.route("**/api/uploads/extract-batch", (route) =>
+    route.fulfill({
+      status: 202,
+      json: { document_id: doc.document_id, job_id: "job-images", status: "uploaded" },
+    }),
+  );
+  await page
+    .getByLabel("Chọn ảnh tài liệu", { exact: true })
+    .setInputFiles({ name: "one.png", mimeType: "image/png", buffer: Buffer.from("test-image") });
+  await expect(page.getByText(/Tài liệu đã được lưu/)).toBeVisible();
+  await page.reload();
+  ready = true;
+  await page.getByRole("button", { name: "Kiểm tra tài liệu đang xử lý" }).click();
+  await expect(page.getByRole("button", { name: "Bắt đầu học" })).toBeEnabled();
+  await expect(
+    page.getByText("Hãy phân tích vấn đề được nêu trong ảnh.", { exact: true }).first(),
+  ).toBeVisible();
 });

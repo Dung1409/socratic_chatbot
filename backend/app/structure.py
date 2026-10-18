@@ -168,6 +168,8 @@ def _extract_footnotes(lines):
     """Read footnotes near page bottoms, including ones printed after HẾT."""
     groups = {}
     for index, line in enumerate(lines):
+        if ANSWER_KEY.match(line["text"].strip()):
+            break
         groups.setdefault(line["page"], []).append(index)
     footnotes = []
     consumed = set()
@@ -208,7 +210,7 @@ def _notes_for_question(question_text, source_text, footnotes):
     return selected
 
 
-def structure_text(text: str, pages: list | None = None) -> dict:
+def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> dict:
     """Split an exam conservatively, keeping source references and exclusions."""
     parts = []
     global_lines = []
@@ -227,6 +229,7 @@ def structure_text(text: str, pages: list | None = None) -> dict:
     current_question = None
     current_idea = None
     ended = False
+    kept_lines = []
 
     def get_part():
         nonlocal current_part
@@ -238,13 +241,15 @@ def structure_text(text: str, pages: list | None = None) -> dict:
 
     for index, line in enumerate(source_lines):
         if index in footnote_lines:
+            if mode in {"single", "reference"}:
+                kept_lines.append(line)
             continue
         stripped = line["text"].strip()
         if ended:
             if stripped:
                 excluded.append({**line, "reason": "after_end"})
             continue
-        if exam_layout and (ANSWER_KEY.match(stripped) or _is_end_marker(stripped)):
+        if ANSWER_KEY.match(stripped) or (exam_layout and _is_end_marker(stripped)):
             ended = True
             excluded.append({**line, "reason": "answer_key" if ANSWER_KEY.match(stripped) else "end_marker"})
             continue
@@ -257,6 +262,7 @@ def structure_text(text: str, pages: list | None = None) -> dict:
         if exam_layout and current_part is None and _is_exam_header(stripped):
             excluded.append({**line, "reason": "exam_header"})
             continue
+        kept_lines.append(line)
         if _is_section(stripped):
             current_part = {"id": f"part-{len(parts) + 1}", "title": stripped,
                             "_context": [], "questions": []}
@@ -307,6 +313,13 @@ def structure_text(text: str, pages: list | None = None) -> dict:
         global_lines = []
         warnings.append("Không thấy câu hỏi tường minh; đã giữ nguyên toàn bộ nội dung tài liệu.")
 
+    if mode in {"single", "reference"}:
+        parts = [{"id": "part-1", "title": "Đề bài" if mode == "single" else "Tài liệu",
+                  "_context": [], "questions": [{"id": "part-1-question-1",
+                  "label": "Đề bài" if mode == "single" else "Nội dung tài liệu", "source_only": mode == "reference",
+                  "_stem": kept_lines[:1], "_body": kept_lines[1:], "ideas": []}]}]
+        global_lines = []
+        warnings = [warning for warning in warnings if not warning.startswith("Không thấy câu hỏi")]
     global_context = _text(global_lines)
     for part in parts:
         context_lines = part.pop("_context")
@@ -318,8 +331,9 @@ def structure_text(text: str, pages: list | None = None) -> dict:
             body = question.pop("_body")
             question["stem"] = _text(stem)
             question["text"] = _text([*stem[:1], *body])
-            if question["label"] == "Nội dung chưa tách được":
+            if question.get("source_only") or question["label"] == "Nội dung chưa tách được":
                 question["task"], question["materials"] = "", question["text"]
+                question["source_only"] = True
             else:
                 question["task"], question["materials"] = _split_question_content(part["title"], question["text"])
             question["source_pages"] = _pages([*stem, *body])
@@ -383,7 +397,7 @@ def question_context(global_context: str, part: dict, question: dict) -> str:
                       for note in question.get("footnotes", []))
     materials = question.get("materials", "").strip()
     task = question.get("task", question["text"]).strip()
-    if question["label"] == "Nội dung chưa tách được":
+    if question.get("source_only") or question["label"] == "Nội dung chưa tách được":
         return "\n\n".join(value for value in [*_shared_context(global_context, part, question["text"]),
                                              f"Nội dung tài liệu:\n{materials}"] if value)
     return "\n\n".join(value for value in [*_shared_context(global_context, part, question["text"]),

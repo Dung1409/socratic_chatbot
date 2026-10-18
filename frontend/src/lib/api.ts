@@ -272,43 +272,74 @@ const post = <T>(path: string, body: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
 export type SourceTag = { type: string; id: string; label?: string; text: string };
-export type SourcePage = { number: number; label: string; text: string; method: string; confidence: number | null; tags?: SourceTag[] };
+export type SourcePage = {
+  number: number;
+  label: string;
+  text: string;
+  method: string;
+  confidence: number | null;
+  tags?: SourceTag[];
+};
 export type SourceParagraph = { id: string; text: string; source_pages: number[] };
-export type ParsedIdea = { id: string; label: string; text: string; context: string; source_pages: number[] };
+export type ParsedIdea = {
+  id: string;
+  label: string;
+  text: string;
+  context: string;
+  source_pages: number[];
+};
 export type ParsedQuestion = {
-  id: string; label: string; text: string; stem: string; context: string; task?: string; materials?: string;
-  points?: string | null; source_selection?: "full_source" | "cited_paragraphs" | "matched_phrase";
-  subquestions: string[]; ideas: ParsedIdea[]; source_pages: number[]; paragraphs: SourceParagraph[];
+  id: string;
+  label: string;
+  text: string;
+  stem: string;
+  context: string;
+  task?: string;
+  materials?: string;
+  points?: string | null;
+  source_selection?: "full_source" | "cited_paragraphs" | "matched_phrase";
+  subquestions: string[];
+  ideas: ParsedIdea[];
+  source_pages: number[];
+  paragraphs: SourceParagraph[];
+  source_only?: boolean;
+  footnotes?: { number: string | number; text: string }[];
 };
 export type ParsedPart = {
-  id: string; title: string; context: string; source_pages: number[];
-  paragraphs: SourceParagraph[]; questions: ParsedQuestion[];
+  id: string;
+  title: string;
+  context: string;
+  source_pages: number[];
+  paragraphs: SourceParagraph[];
+  questions: ParsedQuestion[];
 };
 export type DocumentStructure = {
-  global_context: string; global_paragraphs: SourceParagraph[]; parts: ParsedPart[];
-  excluded: { text: string; page: number | null; reason: string }[]; warnings: string[];
+  global_context: string;
+  global_paragraphs: SourceParagraph[];
+  parts: ParsedPart[];
+  excluded: { text: string; page: number | null; reason: string }[];
+  warnings: string[];
 };
-type ExtractedDocument = {
-  filename: string; title: string; text: string; document_id?: string;
-  structure?: DocumentStructure; pages?: SourcePage[]; blocks?: ContentBlock[]; warnings?: string[]; document_type?: string; subject?: string;
-};
-export type ContentBlock = {
-  id: string; type: "heading" | "paragraph" | "list_item" | string;
-  text: string; page: number; method: string;
-};
-type PendingDocument = { document_id: string; job_id: string; status: string };
-type DocumentStatus = PendingDocument & {
+export type ExtractedDocument = {
   filename: string;
   title: string;
-  text: string | null;
-  error: string | null;
-  structure?: DocumentStructure | null;
+  text: string;
+  document_id?: string;
+  structure?: DocumentStructure;
   pages?: SourcePage[];
   blocks?: ContentBlock[];
-  extraction_warnings?: string[];
+  warnings?: string[];
   document_type?: string;
   subject?: string;
 };
+export type ContentBlock = {
+  id: string;
+  type: "heading" | "paragraph" | "list_item" | string;
+  text: string;
+  page: number;
+  method: string;
+};
+type PendingDocument = { document_id: string; job_id: string; status: string };
 export type DocumentHistoryItem = {
   document_id: string;
   filename: string;
@@ -322,7 +353,13 @@ export type DocumentHistoryItem = {
   part_count: number;
   question_count: number;
   warning_count: number;
-  groups: { id: string; label: string; text: string; question_ids: string[]; question_labels: string[] }[];
+  groups: {
+    id: string;
+    label: string;
+    text: string;
+    question_ids: string[];
+    question_labels: string[];
+  }[];
 };
 export type DocumentDetail = DocumentHistoryItem & {
   text: string | null;
@@ -331,11 +368,60 @@ export type DocumentDetail = DocumentHistoryItem & {
   blocks?: ContentBlock[];
   extraction_warnings?: string[];
   error?: string | null;
+  review?: DocumentReview | null;
 };
 
+export type InputMode = "auto" | "single" | "reference";
+export type DocumentReview = {
+  title: string;
+  text: string;
+  structure: DocumentStructure;
+  selected_ids: string[];
+  mode: InputMode;
+};
+
+async function waitForDocument(
+  pending: PendingDocument,
+  onPending?: (id: string) => void,
+): Promise<ExtractedDocument> {
+  onPending?.(pending.document_id);
+  for (let attempt = 0; attempt < 900; attempt++) {
+    const document = await api.document(pending.document_id);
+    if (document.status === "needs_review" && document.text !== null) {
+      return {
+        filename: document.filename,
+        title: document.title,
+        text: document.text,
+        document_id: pending.document_id,
+        ...(document.structure ? { structure: document.structure } : {}),
+        ...(document.pages ? { pages: document.pages } : {}),
+        ...(document.blocks ? { blocks: document.blocks } : {}),
+        ...(document.document_type ? { document_type: document.document_type } : {}),
+        ...(document.subject ? { subject: document.subject } : {}),
+        ...(document.extraction_warnings ? { warnings: document.extraction_warnings } : {}),
+      };
+    }
+    if (document.status === "failed")
+      throw new ApiError(document.error || "Không trích xuất được tài liệu.", 422);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new ApiError("Tài liệu vẫn đang xử lý. Mở Lịch sử tài liệu để tiếp tục khi hoàn tất.", 504);
+}
+
 export const api = {
+  quickStart: (prompt: string, materials: string) =>
+    post<Assignment>("/learning/quick-start", { prompt, materials }),
+  retryDocument: async (id: string, onPending?: (id: string) => void) =>
+    waitForDocument(await post<PendingDocument>(`/documents/${id}/retry`, {}), onPending),
   documents: () => request<DocumentHistoryItem[]>("/documents"),
   document: (id: string) => request<DocumentDetail>(`/documents/${id}`),
+  saveTextDocument: (text: string, title: string, mode: InputMode) =>
+    post<DocumentDetail>("/documents/text", { text, title, mode }),
+  saveDocumentReview: (id: string, body: DocumentReview) =>
+    request<DocumentDetail>(`/documents/${id}/review`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   assignments: () => request<Assignment[]>("/assignments"),
   createAssignment: (body: {
     title: string;
@@ -361,7 +447,7 @@ export const api = {
       metadata?: Record<string, unknown>;
     }>;
   }) => post<Assignment>("/learning/assignments", body),
-  extract: async (file: File): Promise<ExtractedDocument> => {
+  extract: async (file: File, onPending?: (id: string) => void): Promise<ExtractedDocument> => {
     const data = new FormData();
     data.append("file", file);
     const result = await request<ExtractedDocument | PendingDocument>("/uploads/extract", {
@@ -369,34 +455,26 @@ export const api = {
       body: data,
     });
     if ("text" in result) return result;
-    for (let attempt = 0; attempt < 1800; attempt++) {
-      const document = await request<DocumentStatus>(`/documents/${result.document_id}`);
-      if (document.status === "needs_review" && document.text !== null) {
-        return { filename: document.filename, title: document.title, text: document.text,
-          document_id: result.document_id,
-          ...(document.structure ? { structure: document.structure } : {}),
-          ...(document.pages ? { pages: document.pages } : {}),
-          ...(document.blocks ? { blocks: document.blocks } : {}),
-          ...(document.document_type ? { document_type: document.document_type } : {}),
-          ...(document.subject ? { subject: document.subject } : {}),
-          ...(document.extraction_warnings ? { warnings: document.extraction_warnings } : {}) };
-      }
-      if (document.status === "failed") {
-        throw new ApiError(document.error || "Không trích xuất được văn bản từ tệp.", 422);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    throw new ApiError("Tệp vẫn đang được xử lý. Em có thể nhập đề trực tiếp trong lúc chờ.", 504);
+    return waitForDocument(result, onPending);
   },
-  extractBatch: (files: File[]) => {
+  extractBatch: async (files: File[], onPending?: (id: string) => void) => {
     const data = new FormData();
     files.forEach((file) => data.append("files", file));
-    return request<{ combined?: ExtractedDocument; documents?: ExtractedDocument[]; warnings?: string[]; needs_confirmation: boolean }>(
-      "/uploads/extract-batch", { method: "POST", body: data },
-    );
+    const result = await request<
+      | PendingDocument
+      | {
+          combined?: ExtractedDocument;
+          documents?: ExtractedDocument[];
+          warnings?: string[];
+          needs_confirmation: boolean;
+        }
+    >("/uploads/extract-batch", { method: "POST", body: data });
+    return "document_id" in result
+      ? { combined: await waitForDocument(result, onPending), needs_confirmation: true }
+      : result;
   },
-  structure: (text: string, pages?: SourcePage[]) =>
-    post<DocumentStructure>("/uploads/structure", { text, ...(pages ? { pages } : {}) }),
+  structure: (text: string, pages?: SourcePage[], mode: InputMode = "auto") =>
+    post<DocumentStructure>("/uploads/structure", { text, mode, ...(pages ? { pages } : {}) }),
   dashboard: () => request<Dashboard>("/dashboard"),
   progress: () => request<Progress>("/progress"),
   sessions: () => request<Session[]>("/sessions"),

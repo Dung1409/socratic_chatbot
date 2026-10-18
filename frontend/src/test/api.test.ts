@@ -95,6 +95,36 @@ describe("FastAPI client", () => {
       message: "Không đọc được tệp.",
     });
   });
+  it("tracks and resumes a queued image batch using the same document polling as files", async () => {
+    const pending = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ document_id: "images", job_id: "job-images", status: "uploaded" }),
+            { status: 202 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              filename: "images",
+              title: "Bộ ảnh",
+              text: "Câu 1. Yêu cầu từ ảnh.",
+              status: "needs_review",
+            }),
+          ),
+        ),
+    );
+    const result = await api.extractBatch([new File(["image"], "one.png")], pending);
+    expect(pending).toHaveBeenCalledWith("images");
+    expect(result.combined).toMatchObject({
+      document_id: "images",
+      text: "Câu 1. Yêu cầu từ ảnh.",
+    });
+  });
   it("supports synchronous extraction during local development", async () => {
     const extracted = { filename: "de.txt", title: "de", text: "Nội dung đề bài đủ dài." };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(extracted))));

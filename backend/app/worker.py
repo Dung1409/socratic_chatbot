@@ -21,7 +21,7 @@ def extract_isolated(filename, data):
     # subprocess.run kills and waits for the parser when its deadline expires.
     result = subprocess.run(
         [sys.executable, "-m", "backend.app.extraction", Path(filename).suffix.lower()],
-        input=data, capture_output=True, timeout=config.positive_integer("WORKER_JOB_TIMEOUT_SECONDS", 45),
+        input=data, capture_output=True, timeout=config.positive_integer("WORKER_JOB_TIMEOUT_SECONDS", 300),
     )
     if result.returncode:
         raise RuntimeError("Parser process failed")

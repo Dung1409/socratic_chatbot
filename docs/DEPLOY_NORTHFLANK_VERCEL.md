@@ -71,7 +71,8 @@ sequence cần thiết. Nếu tách role, bảo đảm quyền trên bảng/sequ
 | STORAGE_PATH | /app/storage |
 | RUN_MODE | combined trên `socratic-api`; mặc định image vẫn là api |
 | SHUTDOWN_GRACE_SECONDS | 120; supervisor từ chối giá trị dưới 60 |
-| WORKER_JOB_TIMEOUT_SECONDS | 45 |
+| WORKER_JOB_TIMEOUT_SECONDS | 300 |
+| DOCUMENT_AI_TIMEOUT_SECONDS | 30; mỗi lần đọc, tự giữ bản cục bộ khi hết thời gian dành cho AI |
 | WORKER_PARSER_MEMORY_MB | 256 để bắt đầu thử nghiệm container khoảng 1 GiB |
 
 Tạo JWT key trong môi trường riêng bằng `python -c "import secrets; print(secrets.token_urlsafe(48))"`,

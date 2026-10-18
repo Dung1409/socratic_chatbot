@@ -8,6 +8,7 @@ when explicitly selected for legacy use.
 import base64
 import json
 import os
+import time
 
 from . import gemini
 
@@ -35,7 +36,8 @@ def _openai_request(batch: list[dict]) -> tuple[dict[str, dict], list[dict]]:
         else:
             content.append({"type": "text", "text": unit["text"] or "[Trang không có chữ]"})
     try:
-        with OpenAI(timeout=110, max_retries=0) as client:
+        from .config import positive_integer
+        with OpenAI(timeout=positive_integer("DOCUMENT_AI_TIMEOUT_SECONDS", 30), max_retries=0) as client:
             response = client.chat.completions.create(
                 model=os.getenv("DOCUMENT_AI_MODEL", "gpt-5-mini"),
                 messages=[{"role": "user", "content": content}],
@@ -56,7 +58,13 @@ def _openai_request(batch: list[dict]) -> tuple[dict[str, dict], list[dict]]:
 def _apply(pages, images, request):
     replacements = {}
     warnings = []
+    from .config import positive_integer
+    call_timeout = positive_integer("DOCUMENT_AI_TIMEOUT_SECONDS", 30)
+    deadline = time.monotonic() + max(0, positive_integer("WORKER_JOB_TIMEOUT_SECONDS", 300) - 10)
     for batch in gemini._batches(gemini._pieces(pages, images)):
+        if time.monotonic() + call_timeout > deadline:
+            warnings.append("Đã hết thời gian đọc bằng AI; giữ nội dung trích xuất cục bộ để em kiểm tra.")
+            break
         try:
             values, uncertain = request(batch)
             replacements.update(values)

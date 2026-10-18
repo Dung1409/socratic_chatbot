@@ -20,15 +20,15 @@ class AssignmentInput(Input):
 class AssignmentItemInput(Input):
     item_type: Literal["reading", "social", "literary", "other"] = "other"
     label: str = Field(min_length=1, max_length=200)
-    prompt: str = Field(min_length=1, max_length=30000)
-    context: str = Field(default="", max_length=50000)
+    prompt: str = Field(min_length=1, max_length=150000)
+    context: str = Field(default="", max_length=200000)
     source_pages: list[int] = Field(default_factory=list, max_length=30)
     metadata: dict = Field(default_factory=dict)
 
 
 class MultiAssignmentInput(Input):
     title: str = Field(min_length=5, max_length=300)
-    prompt: str = Field(default="", max_length=30000)
+    prompt: str = Field(default="", max_length=150000)
     task_type: Literal["reading", "social", "literary", "mixed"] = "mixed"
     source_text: str = Field(default="", max_length=150000)
     document_id: str | None = Field(default=None, min_length=1, max_length=100)
@@ -62,11 +62,88 @@ class SourcePageInput(Input):
 class StructureInput(Input):
     text: str = Field(min_length=15, max_length=150000)
     pages: list[SourcePageInput] | None = Field(default=None, max_length=30)
+    mode: Literal["auto", "single", "reference"] = "auto"
 
     @model_validator(mode="after")
     def valid_pages(self):
         if self.pages and [page.number for page in self.pages] != list(range(1, len(self.pages) + 1)):
             raise ValueError("Trang/ảnh phải được đánh số theo thứ tự đã xác nhận")
+        if self.pages and "\n\n".join(page.text for page in self.pages if page.text).strip() != self.text:
+            raise ValueError("Văn bản đã thay đổi; cần bỏ bản trang cũ và phân tích lại nội dung mới")
+        return self
+
+
+class ReviewParagraph(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    text: str = Field(max_length=150000)
+    source_pages: list[int] = Field(default_factory=list, max_length=30)
+
+
+class ReviewQuestion(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str = Field(min_length=1, max_length=100)
+    label: str = Field(min_length=1, max_length=200)
+    text: str = Field(max_length=150000)
+    task: str = Field(default="", max_length=150000)
+    context: str = Field(max_length=200000)
+    materials: str = Field(default="", max_length=150000)
+    source_only: bool = False
+    stem: str = Field(default="", max_length=150000)
+    paragraphs: list[ReviewParagraph] = Field(default_factory=list, max_length=15000)
+    source_pages: list[int] = Field(default_factory=list, max_length=30)
+    ideas: list[dict] = Field(default_factory=list, max_length=100)
+    subquestions: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ReviewPart(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str = Field(min_length=1, max_length=100)
+    title: str = Field(max_length=500)
+    context: str = Field(default="", max_length=150000)
+    paragraphs: list[ReviewParagraph] = Field(default_factory=list, max_length=15000)
+    source_pages: list[int] = Field(default_factory=list, max_length=30)
+    questions: list[ReviewQuestion] = Field(max_length=5000)
+
+
+class ReviewStructure(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    parts: list[ReviewPart] = Field(min_length=1, max_length=100)
+    global_context: str = Field(default="", max_length=150000)
+    global_paragraphs: list[ReviewParagraph] = Field(default_factory=list, max_length=15000)
+    warnings: list[str] = Field(default_factory=list, max_length=1000)
+    excluded: list[dict] = Field(default_factory=list, max_length=15000)
+
+
+class DocumentReviewInput(Input):
+    title: str = Field(min_length=5, max_length=300)
+    text: str = Field(min_length=15, max_length=150000)
+    structure: ReviewStructure
+    selected_ids: list[str] = Field(default_factory=list, max_length=100)
+    mode: Literal["auto", "single", "reference"] = "auto"
+
+    @model_validator(mode="after")
+    def valid_selection(self):
+        ids = [q.id for part in self.structure.parts for q in part.questions]
+        if len(ids) > 5000 or len(ids) != len(set(ids)) or not set(self.selected_ids).issubset(ids):
+            raise ValueError("Bản tách không hợp lệ; tài liệu tối đa 5.000 câu và mỗi phiên chọn tối đa 100 câu")
+        import json
+        if len(json.dumps(self.structure.model_dump(), ensure_ascii=False)) > 32_000_000:
+            raise ValueError("Bản tách quá lớn; hãy chia tài liệu thành các phần nhỏ hơn")
+        return self
+
+
+class TextDocumentInput(StructureInput):
+    title: str = Field(default="Đề nhập trực tiếp", min_length=5, max_length=300)
+
+
+class QuickTaskInput(Input):
+    prompt: str = Field(min_length=15, max_length=150000)
+    materials: str = Field(default="", max_length=150000)
+
+    @model_validator(mode="after")
+    def combined_size(self):
+        if len(self.prompt) + len(self.materials) + (12 if self.materials else 0) > 150000:
+            raise ValueError("Đề và ngữ liệu tối đa 150.000 ký tự")
         return self
 
 

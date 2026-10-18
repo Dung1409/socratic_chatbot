@@ -548,6 +548,15 @@ def extract_document(filename: str, data: bytes) -> dict:
         raise ExtractionError("Không đọc được tệp. Kiểm tra định dạng và thử lại.") from exc
 
 
+def extract_image_archive(data: bytes) -> dict:
+    """Internal ordered archive created by JobQueue, never a public upload format."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        entries = archive.infolist()
+        if not 1 <= len(entries) <= 12 or any(entry.file_size > MAX_FILE_BYTES for entry in entries):
+            raise ExtractionError("Bộ ảnh không hợp lệ")
+        return extract_image_batch([(entry.filename, archive.read(entry)) for entry in entries])
+
+
 def extract_text(filename: str, data: bytes) -> str:
     """Compatibility helper for old callers/tests."""
     return extract_document(filename, data)["text"]
@@ -566,7 +575,10 @@ if __name__ == "__main__":
     # Only the file extension is an argument; content travels over stdin and is
     # never logged. The parent worker enforces the process execution deadline.
     try:
-        output = extract_document("document" + sys.argv[1], sys.stdin.buffer.read(MAX_FILE_BYTES + 1))
+        if sys.argv[1] == ".imagebatch":
+            output = extract_image_archive(sys.stdin.buffer.read(12 * MAX_FILE_BYTES + 4097))
+        else:
+            output = extract_document("document" + sys.argv[1], sys.stdin.buffer.read(MAX_FILE_BYTES + 1))
     except ExtractionError as error:
         output = {"error": str(error), "status_code": error.status_code}
     sys.stdout.buffer.write(json.dumps(output, ensure_ascii=False).encode("utf-8"))

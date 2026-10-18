@@ -15,11 +15,12 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from .db import Database
 from .auth import AuthService, Principal, UNSAFE_METHODS, auth_router
-from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, extract_image_batch, validate_upload
-from .structure import structure_text
+from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, extract_image_batch, extract_image_archive, validate_upload
+from .structure import structure_text, question_context
 from .jobs import JobQueue
 from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput,
-                      MultiAssignmentInput, SessionTurnInput, SessionItemStatusInput, SessionSelectItemInput)
+                      MultiAssignmentInput, SessionTurnInput, SessionItemStatusInput, SessionSelectItemInput,
+                      DocumentReviewInput, TextDocumentInput, QuickTaskInput)
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 from .ai_tutor import OpenAITutor
 from .adaptive import AdaptiveSessions, public_pending
@@ -190,8 +191,12 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         assignment_id = str(uuid4())
         now_value = now()
         with db.connect(write=True) as conn:
-            if body.document_id and queue.document(body.document_id, owner_id=user.id) is None:
-                raise HTTPException(404, "Không tìm thấy tài liệu")
+            if body.document_id:
+                source_document = queue.document(body.document_id, owner_id=user.id)
+                if source_document is None:
+                    raise HTTPException(404, "Không tìm thấy tài liệu")
+                if source_document["status"] != "needs_review":
+                    raise HTTPException(409, "Tài liệu chưa xử lý xong; hãy chờ và kiểm tra bản tách")
             db.execute(conn, """INSERT INTO assignments
                 (id, owner_id, title, prompt, task_type, source_text, document_id, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -209,6 +214,34 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def get_multi_assignment(assignment_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
             return _multi_assignment(conn, assignment_id, user.id)
+
+    @app.post("/api/learning/quick-start", status_code=201, tags=["Multi-question learning"])
+    def quick_start(body: QuickTaskInput, user: Principal = Depends(auth.current_user)):
+        auth.resource_limit(user.id, "upload")
+        parsed = structure_text(body.prompt, mode="single")
+        part = parsed["parts"][0]
+        question = part["questions"][0]
+        task = question["task"].strip()
+        if len(task) < 15:
+            raise HTTPException(422, "Nhập yêu cầu học từ 15 ký tự, tách riêng phần đáp án nếu có")
+        if body.materials:
+            source = structure_text(body.materials, mode="reference")
+            question["materials"] = source["parts"][0]["questions"][0]["materials"]
+            parsed["warnings"].extend(source["warnings"])
+            parsed["excluded"].extend(source["excluded"])
+        question["context"] = question_context(parsed["global_context"], part, question)
+        title = " ".join(task.split())[:80]
+        if len(title) < 5:
+            title = "Đề tự học"
+        raw_text = body.prompt + ("\n\nNgữ liệu:\n" + body.materials if body.materials else "")
+        saved = queue.submit("de-le.txt", raw_text.encode("utf-8"), owner_id=user.id)
+        queue.complete(saved["document_id"], {"text": raw_text, "pages": [{"number": 1,
+            "label": "Đề lẻ", "text": raw_text, "method": "text", "confidence": None}], "warnings": []})
+        queue.save_review(saved["document_id"], user.id, {"title": title, "text": raw_text,
+            "structure": parsed, "selected_ids": [question["id"]], "mode": "single"})
+        return create_multi_assignment(MultiAssignmentInput(title=title, prompt=task, source_text=raw_text,
+            document_id=saved["document_id"], items=[{"item_type": "other", "label": "Đề bài",
+            "prompt": task, "context": question["context"], "metadata": {"source_only": False}}]), user)
 
     @app.post("/api/learning/assignments/{assignment_id}/sessions", status_code=201,
               tags=["Multi-question learning"])
@@ -336,28 +369,37 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         filename, data = read_upload(file)
         if background_jobs:
             return JSONResponse(queue.submit(filename, data, owner_id=user.id), status_code=202)
+        saved = queue.submit(filename, data, owner_id=user.id)
         try:
             extracted = extract_document(filename, data)
         except ExtractionError as exc:
+            queue.fail(saved["document_id"], str(exc))
             raise HTTPException(exc.status_code, str(exc)) from exc
-        return {"filename": filename, "title": Path(filename).stem, **extracted,
+        queue.complete(saved["document_id"], extracted)
+        return {"filename": filename, "title": Path(filename).stem, **saved, **extracted,
                 "structure": structure_text(extracted["text"], extracted["pages"]),
                 "needs_confirmation": True}
 
     @app.post("/api/uploads/extract-batch", tags=["Assignments"])
     def extract_batch(files: list[UploadFile] = File(...), user: Principal = Depends(auth.current_user)):
         """Extract several pages/images in submitted order without merging them blindly."""
-        if not files:
-            raise HTTPException(422, "Cần tải lên ít nhất một tệp")
+        auth.resource_limit(user.id, "upload")
+        if not 1 <= len(files) <= 12:
+            raise HTTPException(422, "Cần tải lên từ 1 đến 12 tệp")
         uploads = [read_upload(file) for file in files]
         if all(Path(filename).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
                for filename, _ in uploads):
+            saved = queue.submit_images(uploads, owner_id=user.id)
+            if background_jobs:
+                return JSONResponse(saved, status_code=202)
             try:
                 extracted = extract_image_batch(uploads)
             except ExtractionError as exc:
+                queue.fail(saved["document_id"], str(exc))
                 raise HTTPException(exc.status_code, str(exc)) from exc
+            queue.complete(saved["document_id"], extracted)
             return {"combined": {"filename": f"{len(uploads)} ảnh", "title": "Tài liệu từ ảnh",
-                                  **extracted, "structure": structure_text(extracted["text"], extracted["pages"])},
+                                  **saved, **extracted, "structure": structure_text(extracted["text"], extracted["pages"])},
                     "needs_confirmation": True}
         documents = []
         for sequence, (filename, data) in enumerate(uploads, start=1):
@@ -373,7 +415,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
 
     @app.post("/api/uploads/structure", tags=["Assignments"])
     def analyze_structure(body: StructureInput, user: Principal = Depends(auth.current_user)):
-        return structure_text(body.text, [page.model_dump() for page in body.pages] if body.pages else None)
+        return structure_text(body.text, [page.model_dump() for page in body.pages] if body.pages else None, body.mode)
 
     def read_upload(file):
         filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1][:300]
@@ -389,6 +431,28 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         auth.resource_limit(user.id, "upload")
         filename, data = read_upload(file)
         return queue.submit(filename, data, owner_id=user.id)
+
+    @app.post("/api/documents/text", status_code=201, tags=["Documents"])
+    def save_text_document(body: TextDocumentInput, user: Principal = Depends(auth.current_user)):
+        auth.resource_limit(user.id, "upload")
+        saved = queue.submit("de-nhap-truc-tiep.txt", body.text.encode("utf-8"), owner_id=user.id)
+        queue.complete(saved["document_id"], {"text": body.text,
+            "pages": [{"number": 1, "label": "Văn bản nhập trực tiếp", "text": body.text,
+                       "method": "text", "confidence": None}], "warnings": []})
+        parsed = structure_text(body.text, mode=body.mode)
+        questions = [question for part in parsed["parts"] for question in part["questions"]]
+        queue.save_review(saved["document_id"], user.id, {"title": body.title, "text": body.text,
+            "structure": parsed, "selected_ids": [questions[0]["id"]] if len(questions) == 1 else [], "mode": body.mode})
+        return queue.document(saved["document_id"], owner_id=user.id)
+
+    @app.put("/api/documents/{document_id}/review", tags=["Documents"])
+    def save_document_review(document_id: str, body: DocumentReviewInput, user: Principal = Depends(auth.current_user)):
+        document = queue.document(document_id, owner_id=user.id)
+        if document is None:
+            raise HTTPException(404, "Không tìm thấy tài liệu")
+        if not queue.save_review(document_id, user.id, body.model_dump()):
+            raise HTTPException(409, "Tài liệu chưa xử lý xong")
+        return queue.document(document_id, owner_id=user.id)
 
     @app.get("/api/documents", tags=["Documents"])
     def documents(user: Principal = Depends(auth.current_user)):
@@ -420,12 +484,41 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                            "groups": groups})
         return result
 
+    @app.post("/api/documents/{document_id}/retry", status_code=202, tags=["Documents"])
+    def retry_document(document_id: str, user: Principal = Depends(auth.current_user)):
+        auth.resource_limit(user.id, "upload")
+        document = queue.document(document_id, owner_id=user.id)
+        if document is None:
+            raise HTTPException(404, "Không tìm thấy tài liệu")
+        if not queue.retry(document_id, user.id):
+            raise HTTPException(409, "Chỉ thử lại tài liệu đã xử lý thất bại")
+        if not background_jobs:
+            job = {"storage_key": queue.original(document_id, user.id)[0].name, "filename": document["filename"]}
+            try:
+                data = queue.read_file(job)
+                result = extract_image_archive(data) if document["filename"].endswith(".imagebatch") else extract_document(document["filename"], data)
+                queue.complete(document_id, result)
+            except (ExtractionError, OSError) as exc:
+                queue.fail(document_id, "Chưa xử lý lại được tài liệu; bản gốc vẫn được giữ trong lịch sử")
+                raise HTTPException(422, "Chưa xử lý lại được tài liệu; bản gốc vẫn được giữ trong lịch sử") from exc
+        return {"document_id": document_id, "job_id": document["job_id"], "status": "uploaded"}
+
     @app.get("/api/documents/{document_id}", tags=["Documents"])
     def document(document_id: str, user: Principal = Depends(auth.current_user)):
         result = queue.document(document_id, owner_id=user.id)
         if result is None:
             raise HTTPException(404, "Không tìm thấy tài liệu")
         return result
+
+    @app.get("/api/documents/{document_id}/original", tags=["Documents"])
+    def original_document(document_id: str, user: Principal = Depends(auth.current_user)):
+        original = queue.original(document_id, user.id)
+        if original is None or not original[0].is_file():
+            raise HTTPException(404, "Không tìm thấy bản gốc")
+        path, filename = original
+        if filename.endswith(".imagebatch"):
+            filename = "bo-anh-goc.zip"
+        return FileResponse(path, filename=filename, headers={"Cache-Control": "private, no-store"})
 
     def item_assignment(base, item, items):
         assignment = dict(base)

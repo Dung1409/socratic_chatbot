@@ -165,6 +165,90 @@ def test_adaptive_full_flow_report_and_retry_idempotency(client):
     assert action(client, session, "messages", text="Thay lịch sử").status_code == 409
 
 
+def test_hint_check_in_keeps_question_and_does_not_become_student_evidence(client, tutor):
+    calls = []
+
+    def support(session, action):
+        calls.append(action)
+        result = reply(f"Bước hỗ trợ mới {len(calls)} cho câu hỏi gốc.", "support")
+        result.objective = "Mục tiêu phụ do AI tự đổi"
+        return result
+
+    tutor.reply = support
+    session = start(client)
+    anchor = session["turns"][0]
+    for _ in range(3):
+        result = action(client, session, "hints")
+        assert result.status_code == 200, result.text
+        session = result.json()
+        assert session["current_objective"] == anchor["objective"]
+        assert session["turns"][-1]["question_id"] == anchor["id"]
+    assert session["support_state"]["needs_check_in"]
+    assert action(client, session, "hints").status_code == 409
+    assert len(calls) == 3
+    reloaded = client.get(f"/api/sessions/{session['id']}").json()
+    assert reloaded["support_state"] == session["support_state"]
+    body = {"expected_version": session["version"], "client_message_id": "clarify-once", "difficulty": "ideas"}
+    path = f"/api/sessions/{session['id']}/hints"
+    result = client.post(path, json=body)
+    assert result.status_code == 200, result.text
+    session = result.json()
+    assert client.post(path, json=body).json() == session
+    assert len(calls) == 4 and len(session["support_events"]) == 4
+    assert session["turns"][-2]["purpose"] == "clarification"
+    assert session["support_state"]["difficulty"] == "ideas"
+    assert session["support_state"]["consecutive_hints"] == 1
+    assert not session["support_state"]["needs_check_in"]
+    assert session["support_state"]["question_id"] == anchor["id"]
+    assert client.get("/api/dashboard").json()["answers"] == 0
+    assert action(client, session, "finish").status_code == 409
+    for _ in range(2):
+        session = action(client, session, "hints").json()
+    assert session["support_state"]["needs_check_in"]
+    session = action(client, session, "hints", difficulty="understanding").json()
+    assert len(session["support_events"]) == 7
+    assert session["support_state"]["question_id"] == anchor["id"]
+
+
+def test_check_in_choice_survives_failure_and_retry(client, tutor):
+    session = start(client)
+    for _ in range(3):
+        session = action(client, session, "hints").json()
+    tutor.reply = lambda session, action: (_ for _ in ()).throw(TutorError("Thử lại"))
+    body = {"expected_version": session["version"], "client_message_id": "failed-check-in", "difficulty": "expression"}
+    path = f"/api/sessions/{session['id']}/hints"
+    assert client.post(path, json=body).status_code == 502
+    saved = client.get(f"/api/sessions/{session['id']}").json()
+    assert saved["pending_action"]["difficulty"] == "expression"
+    assert len(saved["support_events"]) == 3
+    assert all(t.get("purpose") != "clarification" for t in saved["turns"])
+    tutor.reply = lambda session, action: reply("Một khung diễn đạt mới bám câu hỏi gốc.", "support")
+    result = client.post(path, json=body)
+    assert result.status_code == 200, result.text
+    assert len(result.json()["support_events"]) == 4
+    assert sum(t.get("purpose") == "clarification" for t in result.json()["turns"]) == 1
+
+
+def test_new_student_answer_resets_hint_check_in(client, tutor):
+    session = start(client)
+    for _ in range(3):
+        session = action(client, session, "hints").json()
+    session = answer(client, session)
+    assert not session["support_state"]["needs_check_in"]
+    assert session["support_state"]["question_id"] == session["turns"][-1]["id"]
+    tutor.reply = lambda session, action: reply("Gợi ý cho câu hỏi tiếp theo.", "support")
+    assert action(client, session, "hints").status_code == 200
+
+
+def test_quick_entry_can_start_adaptive_session(client):
+    created = client.post("/api/learning/quick-start", json={
+        "prompt": "Trình bày suy nghĩ về vai trò của đọc sách", "materials": "",
+    })
+    assert created.status_code == 201, created.text
+    session = start(client, created.json()["id"])
+    assert session["support_state"]["consecutive_hints"] == 0
+
+
 def test_proactive_support_counts_but_source_request_does_not(client, tutor):
     session = start(client)
     tutor.reply = lambda session, action: reply("Em hãy bổ sung đoạn trích cần đọc.", "source_request")

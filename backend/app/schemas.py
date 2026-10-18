@@ -160,6 +160,10 @@ class ActionInput(Input):
     expected_version: int = Field(ge=0)
 
 
+class HintInput(ActionInput):
+    difficulty: Literal["understanding", "ideas", "expression"] | None = None
+
+
 class MessageInput(ActionInput):
     text: str = Field(min_length=1, max_length=10000)
 

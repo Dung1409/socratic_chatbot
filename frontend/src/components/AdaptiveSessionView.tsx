@@ -3,12 +3,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { api, ApiError, type Session } from "@/lib/api";
+import { api, ApiError, type HintDifficulty, type Session } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { AssessmentReport } from "@/components/AssessmentReport";
 import { SessionWorkspace } from "@/components/session/SessionWorkspace";
 import { SessionConversation } from "@/components/session/SessionConversation";
 import { SessionComposer } from "@/components/session/SessionComposer";
+import { HintCheckIn } from "@/components/session/HintCheckIn";
 import {
   SessionPendingRequest,
   SessionRequestError,
@@ -42,10 +43,16 @@ export function AdaptiveSessionView({
   const [error, setError] = useState("");
   const [failedAction, setFailedAction] = useState<Action>("message");
   const inFlight = useRef(false);
-  const request = useRef<{ action: Action; text: string; key: string; session: Session } | null>(
-    null,
+  const request = useRef<{
+    action: Action;
+    text: string;
+    key: string;
+    session: Session;
+    difficulty?: HintDifficulty | undefined;
+  } | null>(null);
+  const answers = session.turns.filter(
+    (t) => t.kind === "student" && (!t.purpose || t.purpose === "answer"),
   );
-  const answers = session.turns.filter((t) => t.kind === "student" && t.purpose !== "source");
   const blocked = busy || Boolean(pending);
   const selectItem = async (itemId: string) => {
     if (blocked || itemId === session.assignment.active_item_id) return;
@@ -69,8 +76,11 @@ export function AdaptiveSessionView({
     void client.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "session" });
   };
 
-  const perform = async (action: Action, retry = false) => {
+  const perform = async (action: Action, retry = false, difficulty?: HintDifficulty) => {
     if (inFlight.current) return;
+    const selectedDifficulty = retry
+      ? (pending?.difficulty ?? request.current?.difficulty)
+      : difficulty;
     const text =
       retry && pending
         ? pending.text
@@ -80,9 +90,26 @@ export function AdaptiveSessionView({
             ? essay.trim()
             : "";
     if (retry && pending)
-      request.current = { action, text, key: pending.client_message_id, session };
-    else if (!request.current || request.current.action !== action || request.current.text !== text)
-      request.current = { action, text, key: crypto.randomUUID(), session };
+      request.current = {
+        action,
+        text,
+        key: pending.client_message_id,
+        session,
+        difficulty: pending.difficulty ?? undefined,
+      };
+    else if (
+      !request.current ||
+      request.current.action !== action ||
+      request.current.text !== text ||
+      request.current.difficulty !== selectedDifficulty
+    )
+      request.current = {
+        action,
+        text,
+        key: crypto.randomUUID(),
+        session,
+        difficulty: selectedDifficulty,
+      };
     const operation = request.current;
     inFlight.current = true;
     setBusy(true);
@@ -93,7 +120,7 @@ export function AdaptiveSessionView({
         action === "message"
           ? await api.message(operation.session, text, operation.key)
           : action === "hint"
-            ? await api.hint(operation.session, operation.key)
+            ? await api.hint(operation.session, operation.key, operation.difficulty)
             : action === "submit"
               ? await api.submit(operation.session, text, operation.key)
               : await api.action(operation.session, action, operation.key);
@@ -150,19 +177,30 @@ export function AdaptiveSessionView({
             onSend={() => void perform(session.done ? "submit" : "message")}
             {...(!session.done
               ? {
-                  onHint: () => void perform("hint"),
+                  ...(!session.support_state?.needs_check_in
+                    ? { onHint: () => void perform("hint") }
+                    : {}),
                   hintBusy: busyAction === "hint",
                   ...(answers.length > 0 ? { onFinish: () => void perform("finish") } : {}),
                 }
               : { onContinue: () => void perform("continue") })}
             notice={
-              error && !pending ? (
-                <SessionRequestError
-                  message={error}
-                  disabled={busy}
-                  onRetry={() => void perform(failedAction)}
-                />
-              ) : undefined
+              <>
+                {!session.done && session.support_state?.needs_check_in && (
+                  <HintCheckIn
+                    question={session.support_state.question_text}
+                    disabled={blocked}
+                    onSelect={(difficulty) => void perform("hint", false, difficulty)}
+                  />
+                )}
+                {error && !pending ? (
+                  <SessionRequestError
+                    message={error}
+                    disabled={busy}
+                    onRetry={() => void perform(failedAction, true)}
+                  />
+                ) : undefined}
+              </>
             }
           />
         ) : undefined

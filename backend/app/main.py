@@ -638,6 +638,31 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         )
         return assignment
 
+    def hydrate_session_assignment(conn, session, owner_id):
+        """Rebuild legacy session assignment fields from the relational source."""
+        assignment_id = session.get("assignment_id")
+        assignment_row = db.execute(conn, "SELECT document_id FROM assignments WHERE id=? AND owner_id=?",
+                                    (assignment_id, owner_id)).fetchone()
+        if assignment_row is None:
+            return session
+        items = db.execute(conn, """SELECT id, label, prompt, context, item_type, metadata_json
+            FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
+                           (assignment_id,)).fetchall()
+        base = session.get("assignment") or {}
+        if items:
+            active_id = base.get("active_item_id") or items[0]["id"]
+            item = next((entry for entry in items if entry["id"] == active_id), items[0])
+            assignment = item_assignment(base, item, items, assignment_row["document_id"])
+        else:
+            assignment = dict(base)
+            if assignment_row["document_id"]:
+                assignment["document_id"] = assignment_row["document_id"]
+        if assignment == base:
+            return session
+        hydrated = dict(session)
+        hydrated["assignment"] = assignment
+        return hydrated
+
     @app.post("/api/sessions", tags=["Sessions"])
     def start_session(body: SessionInput, user: Principal = Depends(auth.current_user)):
         with db.connect(write=True) as conn:
@@ -771,12 +796,14 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     @app.get("/api/sessions", tags=["Sessions"])
     def sessions(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            return [public_session(s) for s in saved_sessions(conn, user.id)]
+            return [public_session(hydrate_session_assignment(conn, s, user.id))
+                    for s in saved_sessions(conn, user.id)]
 
     @app.get("/api/sessions/{session_id}", tags=["Sessions"])
     def get_session(session_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
-            return public_session(require(conn, "sessions", session_id, user.id))
+            session = require(conn, "sessions", session_id, user.id)
+            return public_session(hydrate_session_assignment(conn, session, user.id))
 
     def draft_payload(conn, session_id, owner_id):
         session = require(conn, "sessions", session_id, owner_id)
@@ -816,19 +843,10 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def prepare_session(session_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect(write=True) as conn:
             session = require(conn, "sessions", session_id, user.id)
-            assignment_row = db.execute(conn, "SELECT document_id FROM assignments WHERE id=? AND owner_id=?",
-                                        (session["assignment_id"], user.id)).fetchone()
-            document_id = assignment_row["document_id"] if assignment_row else None
-            items = db.execute(conn, """SELECT id, label, prompt, context, item_type, metadata_json
-                FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
-                               (session["assignment_id"],)).fetchall()
-            if items:
-                active_id = (session.get("assignment") or {}).get("active_item_id") or items[0]["id"]
-                item = next((entry for entry in items if entry["id"] == active_id), items[0])
-                assignment = item_assignment(session["assignment"], item, items, document_id)
-                if session["assignment"] != assignment:
-                    session["assignment"] = assignment
-                    db.put(conn, "sessions", session_id, session, owner_id=user.id)
+            hydrated = hydrate_session_assignment(conn, session, user.id)
+            if hydrated is not session:
+                session = hydrated
+                db.put(conn, "sessions", session_id, session, owner_id=user.id)
         if session.get("tutor_mode") == "openai":
             session = adaptive.prepare_item(session_id, user.id)
         return public_session(session)

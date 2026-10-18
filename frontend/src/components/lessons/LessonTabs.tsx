@@ -12,7 +12,8 @@ export function LessonTabs({
   selected: "assignment" | "study" | "results";
 }) {
   const destination = lessonState(assignment, sessions).search;
-  const hasResults = sessions.some((session) => session.submitted && session.assessment);
+  const hasResults =
+    selected === "results" || sessions.some((session) => session.submitted && session.assessment);
   const style = (active: boolean) =>
     `flex min-h-9 items-center justify-center rounded-md border px-3 py-1.5 text-center text-xs sm:text-sm ${active ? "border-primary bg-primary-soft font-semibold text-primary" : "bg-card text-muted-foreground hover:text-primary"}`;
   return (

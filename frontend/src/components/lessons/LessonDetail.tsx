@@ -9,6 +9,7 @@ import { ApiState } from "@/components/ApiState";
 import { AssessmentReport } from "@/components/AssessmentReport";
 import { Button } from "@/components/ui/button";
 import { AssignmentPanel } from "@/components/session/AssignmentPanel";
+import { LessonTabs } from "./LessonTabs";
 
 export function LessonDetail({ id, view }: { id: string; view: "assignment" | "results" }) {
   const [panelOpen, setPanelOpen] = useState(true);
@@ -107,6 +108,11 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
         </header>
         <main id="lesson-content" className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           <div className="learning-chat-content mx-auto w-full space-y-5">
+            <LessonTabs
+              assignment={assignment}
+              sessions={sessions.data ?? []}
+              selected={view}
+            />
             {view === "assignment" ? (
               <>
                 <section className="rounded-xl border bg-card p-5">
@@ -256,7 +262,14 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
                   </article>
                 ))}
               </section>
-            ) : null}
+            ) : (
+              <section className="rounded-xl border bg-card p-5">
+                <h2 className="text-lg font-semibold">Bài học chưa có câu đã nộp</h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Chọn một câu trong đề bài để bắt đầu học và xem kết quả tại đây sau khi nộp.
+                </p>
+              </section>
+            )}
           </div>
         </main>
       </section>

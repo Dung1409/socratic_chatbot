@@ -11,11 +11,11 @@ function report(): Assessment {
     coverage: 3,
     bloom: 90,
     hint_count: 2,
-    autonomy: 0.8,
-    score: 72,
-    raw_score: "72.0",
+    autonomy: 0.8444444444444444,
+    score: 76,
+    raw_score: "76.0",
     classification: "Tư duy Khá",
-    scoring_version: "1",
+    scoring_version: "bloom-autonomy-2.0",
     dimensions: [
       {
         key: "basic",
@@ -36,10 +36,35 @@ describe("final assessment report", () => {
   it("shows Bloom, autonomy and final score separately with student evidence", () => {
     render(<AssessmentReport report={report()} />);
     expect(screen.getByText("90 / 100")).toBeInTheDocument();
-    expect(screen.getByText("72 / 100")).toBeInTheDocument();
-    expect(screen.getByText("0,8")).toBeInTheDocument();
+    expect(screen.getByText("76 / 100")).toBeInTheDocument();
+    expect(screen.getByText("0,8444")).toBeInTheDocument();
+    expect(screen.getByText(/A = 0,3 \+ 0,7 \/ \(1 \+ N\/7\)/)).toBeInTheDocument();
     expect(screen.getByText("Tư duy Khá")).toBeInTheDocument();
     expect(screen.getByText("“Quan điểm của em có căn cứ.”")).toBeInTheDocument();
+  });
+
+  it("preserves historical scores and shows their original formula", () => {
+    render(
+      <AssessmentReport
+        report={{
+          ...report(),
+          scoring_version: "bloom-autonomy-1.0",
+          autonomy: 0.8,
+          score: 72,
+          raw_score: "72.0",
+        }}
+      />,
+    );
+    expect(screen.getByText("72 / 100")).toBeInTheDocument();
+    expect(screen.getByText("0,8")).toBeInTheDocument();
+    expect(screen.getByText(/A = max\(0,3; 1 − 0,1 × N\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/A = 0,3 \+ 0,7/)).not.toBeInTheDocument();
+  });
+
+  it("does not invent a formula for reports with an unknown version", () => {
+    render(<AssessmentReport report={{ ...report(), scoring_version: "future-version" }} />);
+    expect(screen.getByText(/A theo báo cáo đã lưu/)).toBeInTheDocument();
+    expect(screen.getByText("76 / 100")).toBeInTheDocument();
   });
 
   it("does not turn insufficient evidence into zero or classify the student", () => {

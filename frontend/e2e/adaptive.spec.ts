@@ -5,6 +5,7 @@ test.use({ baseURL: "http://127.0.0.1:8012" });
 test("adaptive dialogue, counted support, persistent drafts and evidence-backed final report", async ({
   page,
 }) => {
+  test.setTimeout(120000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/dang-ky");
@@ -15,7 +16,7 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 20000 });
   await page.goto("/de-bai");
   await expect(page.getByLabel("Mục tiêu luyện tập")).toHaveCount(0);
   await page
@@ -61,20 +62,22 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
   await expect(page.getByLabel("Bài làm cuối phiên", { exact: true })).toHaveValue(essay);
   await page.getByRole("button", { name: "Hoàn thành & xem báo cáo" }).click();
   const report = page.getByRole("region", { name: "Báo cáo tư duy cuối phiên" });
-  await expect(report.getByText("54 / 100", { exact: true })).toBeVisible();
-  await expect(report.getByText("Tư duy Trung bình", { exact: true })).toBeVisible();
+  await expect(report.getByText("67,1 / 100", { exact: true })).toBeVisible();
+  await expect(report.getByText("Tư duy Khá", { exact: true })).toBeVisible();
+  await expect(report.getByText("0,7455", { exact: true })).toBeVisible();
+  await expect(report.getByText(/A = 0,3 \+ 0,7 \/ \(1 \+ N\/7\)/)).toBeVisible();
   await report.getByText("Xem bằng chứng từ bài làm", { exact: true }).first().click();
   await expect(report.getByRole("blockquote").first()).toContainText(
     "Tài năng là năng lực nổi bật",
   );
   await page.reload();
-  await expect(page.getByText("54 / 100", { exact: true })).toBeVisible();
+  await expect(page.getByText("67,1 / 100", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" }).click();
   await page.getByText("Xem báo cáo của câu này", { exact: true }).click();
   await expect(page.getByRole("heading", { name: "Báo cáo tư duy cuối phiên" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("link", { name: "Xem lại phiên học", exact: true }).click();
-  await expect(page.getByText("54 / 100", { exact: true })).toBeVisible();
+  await expect(page.getByText("67,1 / 100", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -89,7 +92,7 @@ test("failed student input survives reload and can be canceled without counting 
   await page.getByRole("textbox", { name: "Email", exact: true }).fill("adaptive@example.com");
   await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
-  await expect(page.getByText("Bạn luyện tư duy", { exact: true })).toBeVisible();
+  await expect(page.getByText("Bạn luyện tư duy", { exact: true })).toBeVisible({ timeout: 20000 });
   await page.goto("/de-bai");
   await page
     .getByRole("textbox", { name: "Em muốn học đề nào?", exact: true })

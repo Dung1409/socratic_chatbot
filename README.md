@@ -40,7 +40,7 @@ Hai model có thể cấu hình độc lập. Thiếu khóa hoặc API lỗi: b�
 - Sau 3 gợi ý chưa có phản hồi mới, học sinh chọn chỗ vướng (hiểu câu hỏi, tìm ý, diễn đạt) hoặc thử trả lời để tiếp tục. Đây không phải giới hạn tổng số gợi ý. Lựa chọn được lưu là `purpose=clarification`, không tính là câu trả lời, bằng chứng chấm hay một sự kiện N riêng. Hỗ trợ mới được giao sau lựa chọn vẫn tính N; lựa chọn và mã yêu cầu được giữ qua lỗi/reload để retry đúng một lần.
 - Học sinh có thể kết thúc đối thoại sau ít nhất một câu trả lời hoặc tiếp tục trao đổi trước khi nộp phần tổng hợp. Giới hạn 40 câu trả lời/phiên; khi chạm giới hạn, chuyển sang tổng hợp.
 - Chấm đúng **ba tầng 30–35–35**: Cơ bản (Nhớ–Hiểu), Vận dụng (Áp dụng–Phân tích), Bậc cao (Đánh giá–Sáng tạo). Không chia thành sáu tiêu chí có trọng số riêng. Mốc chất lượng trong mỗi tầng nằm ở `backend/app/assessment.py`, là hướng dẫn vận hành hóa v1 cần đối chiếu với bài chấm mẫu của giáo viên.
-- `B = Cơ bản + Vận dụng + Bậc cao`; `A = max(0.3, 1 - 0.1*N)`; `S = B*A`. Backend dùng Decimal, làm tròn khi hiển thị và xếp loại từ giá trị gốc: `[80,100]` Xuất sắc, `[65,80)` Khá, `[50,65)` Trung bình, dưới 50 Cần Rèn Luyện.
+- `B = Cơ bản + Vận dụng + Bậc cao`; `A = 0.3 + 0.7 / (1 + N/7)`; `S = B*A` (`bloom-autonomy-2.0`). Backend dùng Decimal, giữ độ chính xác của A khi nhân B; điểm hiển thị một chữ số thập phân, A tối đa bốn chữ số. Xếp loại từ giá trị gốc: `[80,100]` Xuất sắc, `[65,80)` Khá, `[50,65)` Trung bình, dưới 50 Cần Rèn Luyện.
 - AI phải trích nguyên văn và chỉ đúng ID câu trả lời/bài tổng hợp làm bằng chứng; backend từ chối điểm vượt thang, bằng chứng không tồn tại hoặc trích từ AI/ngữ liệu bổ sung. Báo cáo có điểm từng tầng, B, N, A, S, xếp loại, điểm mạnh và bước luyện tiếp theo.
 - Thiếu bằng chứng cho cả ba tầng: `insufficient_evidence`, giữ điểm từng tầng đã quan sát, B/S/xếp loại là `null`; không quy thiếu dữ liệu thành 0. Xếp loại mô tả kết quả phiên, không phải năng lực ổn định hay bảng xếp hạng giữa các đề khác nhau.
 - Trước khi chốt điểm, AI rà soát cơ hội quan sát của từng tầng và điểm mạnh có bằng chứng. Chỉ đặt câu hỏi hoặc đưa tình huống phụ chưa được học sinh trả lời không đủ để gán 0; tầng chưa thể đánh giá được chuyển về `observed=false, points=null`.
@@ -49,11 +49,13 @@ Hai model có thể cấu hình độc lập. Thiếu khóa hoặc API lỗi: b�
 
 Kiểm thử dùng provider giả lập và kiểm tra SDK thật qua HTTP mock; không chứng minh chất lượng sư phạm hoặc độ chính xác chấm điểm của model. Cần chạy tập bài giữ lại có giáo viên chấm đối chiếu trước khi dùng điểm trong nghiên cứu chính thức.
 
-### Đề xuất công thức mới — chưa áp dụng
+### Công thức ghi nhận thành quả sau hỗ trợ
 
-Giữ `B` theo bằng chứng học sinh thực sự tạo ra, đề xuất `A = 0.3 + 0.7 / (1 + N/7)` và `S = B*A`. A bắt đầu bằng 1, giảm chậm dần và tiến về sàn 0.3. Với N=6/7, A khoảng 0.677/0.65 thay vì 0.4/0.3; ngay cả lượt hỗ trợ đầu cũng giảm nhẹ hơn công thức cũ (0.9125 thay vì 0.9). Mỗi lần xin thêm có tác động nhỏ dần, vẫn ghi nhận thành quả sau nhiều lượt hỗ trợ. Không cộng điểm chỉ vì bấm gợi ý hoặc nộp lời đáp; phần do AI cung cấp không thành bằng chứng tự lực.
+Giữ `B` theo bằng chứng học sinh thực sự tạo ra, áp dụng `A = 0.3 + 0.7 / (1 + N/7)` và `S = B*A`. A bắt đầu bằng 1, giảm chậm dần và tiến về sàn 0.3. Với N=6/7, A khoảng 0.677/0.65 thay vì 0.4/0.3; ngay cả lượt hỗ trợ đầu cũng giảm nhẹ hơn công thức cũ (0.9125 thay vì 0.9). Mỗi lần xin thêm có tác động nhỏ dần, vẫn ghi nhận thành quả sau nhiều lượt hỗ trợ. Sàn là 30% của B, không phải tự động được 30/100 điểm. Không cộng điểm chỉ vì bấm gợi ý hoặc nộp lời đáp; phần do AI cung cấp không thành bằng chứng tự lực.
 
-Sàn 0.3 và mốc 7 là giả thuyết thiết kế cần hiệu chỉnh bằng bài chấm đối chiếu và phản hồi học sinh, không phải hằng số suy ra từ ZPD. N toàn phiên phụ thuộc số mục tiêu và độ dài bài; không dùng đơn độc để so sánh năng lực giữa các bài. Nên ưu tiên hiển thị B và tiến bộ, mô tả A là bối cảnh hỗ trợ; xem xét lại nhãn xếp loại theo S để tránh diễn giải chất lượng đạt được với hỗ trợ thành năng lực độc lập thấp. Cơ sở định hướng về động lực: [Ryan & Deci (2000)](https://www.selfdeterminationtheory.org/SDT/documents/2000_RyanDeci_SDT.pdf); nghiên cứu này không xác nhận công thức số học nêu trên. Công thức đang chạy và báo cáo đã lưu vẫn giữ nguyên cho tới khi chốt phiên bản tính điểm mới.
+Sàn 0.3 và mốc 7 là giả thuyết thiết kế cần hiệu chỉnh bằng bài chấm đối chiếu và phản hồi học sinh, không phải hằng số suy ra từ ZPD. N toàn phiên phụ thuộc số mục tiêu và độ dài bài; không dùng đơn độc để so sánh năng lực giữa các bài. Cơ sở định hướng về động lực: [Ryan & Deci (2000)](https://www.selfdeterminationtheory.org/SDT/documents/2000_RyanDeci_SDT.pdf); nghiên cứu này không xác nhận công thức số học nêu trên.
+
+Phiên bản `bloom-autonomy-2.0` áp dụng cho các lần chấm mới, bao gồm phiên đang học chưa nộp. Báo cáo đã lưu không bị tính lại; báo cáo `bloom-autonomy-1.0` tiếp tục hiển thị công thức cũ `A = max(0.3, 1 - 0.1*N)` cùng điểm gốc. Các ngưỡng xếp loại theo S giữ nguyên.
 
 ## Chạy trên Windows
 

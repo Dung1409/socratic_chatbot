@@ -2,7 +2,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCORING_VERSION = "bloom-autonomy-1.0"
+SCORING_VERSION = "bloom-autonomy-2.0"
 DIMENSIONS = {
     "basic": ("Cơ bản · Nhớ – Hiểu", 30),
     "application": ("Vận dụng · Áp dụng – Phân tích", 35),
@@ -87,6 +87,11 @@ def classify(score: Decimal):
     return "Cần Rèn Luyện"
 
 
+def autonomy_factor(hint_count: int) -> Decimal:
+    # Equivalent to 0.3 + 0.7 / (1 + N/7), without rounding N/7 first.
+    return Decimal("0.3") + Decimal("4.9") / (Decimal(7) + hint_count)
+
+
 def build_report(draft: AssessmentDraft, session, essay, model):
     sources = student_sources(session, essay)
     dimensions, total = [], Decimal(0)
@@ -103,7 +108,7 @@ def build_report(draft: AssessmentDraft, session, essay, model):
         dimensions.append({"key": key, "name": name, "maximum": maximum,
                            **assessment.model_dump()})
     n = sum(event["counted_for_autonomy"] for event in session.get("support_events", []))
-    autonomy = max(Decimal("0.3"), Decimal(1) - Decimal("0.1") * n)
+    autonomy = autonomy_factor(n)
     complete = all(item["observed"] for item in dimensions)
     score = total * autonomy if complete else None
     display = lambda value: float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))

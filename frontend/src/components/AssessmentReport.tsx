@@ -1,9 +1,15 @@
 import type { Assessment } from "@/lib/api";
 
-const number = (value: number | null) =>
-  value === null ? "—" : value.toLocaleString("vi-VN", { maximumFractionDigits: 1 });
+const number = (value: number | null, maximumFractionDigits = 1) =>
+  value === null ? "—" : value.toLocaleString("vi-VN", { maximumFractionDigits });
 
 export function AssessmentReport({ report }: { report: Assessment }) {
+  const autonomyFormula =
+    report.scoring_version === "bloom-autonomy-2.0"
+      ? "A = 0,3 + 0,7 / (1 + N/7)"
+      : report.scoring_version === "bloom-autonomy-1.0"
+        ? "A = max(0,3; 1 − 0,1 × N)"
+        : "A theo báo cáo đã lưu";
   return (
     <section
       className="rounded-xl border bg-card p-5 sm:p-6 space-y-6"
@@ -24,7 +30,7 @@ export function AssessmentReport({ report }: { report: Assessment }) {
         {[
           ["Điểm Bloom B", `${number(report.bloom)} / 100`],
           ["Lượt hỗ trợ N", String(report.hint_count)],
-          ["Hệ số tự lực A", number(report.autonomy)],
+          ["Hệ số tự lực A", number(report.autonomy, 4)],
           ["Điểm tư duy S", `${number(report.score)} / 100`],
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg bg-muted/50 p-3">
@@ -39,8 +45,9 @@ export function AssessmentReport({ report }: { report: Assessment }) {
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        B = Cơ bản + Vận dụng + Bậc cao · A = max(0,3; 1 − 0,1 × N) · S = B × A. Điểm hiển thị được
-        làm tròn một chữ số thập phân; xếp loại dùng giá trị chưa làm tròn.
+        B = Cơ bản + Vận dụng + Bậc cao · {autonomyFormula} · S = B × A. Điểm hiển thị được làm tròn
+        một chữ số thập phân, hệ số A hiển thị tối đa bốn chữ số thập phân; xếp loại dùng giá trị
+        chưa làm tròn.
       </p>
       <div className="space-y-4">
         {report.dimensions.map((dimension) => (

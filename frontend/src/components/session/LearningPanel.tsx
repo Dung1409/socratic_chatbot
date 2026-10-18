@@ -198,7 +198,7 @@ export function LearningPanel({
                     </TooltipTrigger>
                     <span className="font-medium tabular-nums">
                       {session.assessment.autonomy.toLocaleString("vi-VN", {
-                        maximumFractionDigits: 1,
+                        maximumFractionDigits: 4,
                       })}
                     </span>
                   </div>

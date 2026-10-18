@@ -1,163 +1,276 @@
 import { expect, test, type Page } from "@playwright/test";
 
-async function register(page: Page, email: string, name: string) {
+const password = "Strong test password 123";
+async function register(page: Page) {
+  const email = `learning-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
   await page.goto("/dang-ky");
-  await page.getByLabel("Tên hiển thị").fill(name);
+  await page.getByLabel("Tên hiển thị").fill("Bạn tự học");
   await page.getByRole("textbox", { name: "Email", exact: true }).fill(email);
-  await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
-  await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill("Strong test password 123");
-  const registered = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/api/auth/register") && response.request().method() === "POST",
-    { timeout: 15000 },
-  );
+  await page.getByLabel("Mật khẩu", { exact: true }).fill(password);
+  await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
-  expect((await registered).status()).toBe(201);
-  await expect(
-    page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bài học của tôi" })).toBeVisible();
+  return email;
+}
+async function login(page: Page, email: string) {
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill(email);
+  await page.getByLabel("Mật khẩu", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+}
+async function quick(page: Page, prompt: string, saveOnly = false) {
+  await page.goto("/de-bai?tab=quick");
+  await page.getByRole("textbox", { name: "Em muốn học đề nào?" }).fill(prompt);
+  await page
+    .getByRole("button", { name: saveOnly ? "Lưu đề" : "Bắt đầu học", exact: true })
+    .click();
+  if (!saveOnly) await expect(page).toHaveURL(/phien-hoc\?session=/);
+  else
+    await expect(
+      page.getByText("Đã lưu bài học. Em có thể bắt đầu học sau.", { exact: true }),
+    ).toBeVisible();
 }
 
-test("start from an empty workspace, study a personal assignment and save the final essay", async ({
+test("save a task without starting, leave a session, reopen a tab and restore on another device", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const email = await register(page);
+  const prompt = "Hãy trình bày suy nghĩ về ý nghĩa của việc đọc sách đối với học sinh.";
+  await quick(page, prompt, true);
+  expect(await (await page.request.get("/api/sessions")).json()).toHaveLength(0);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: prompt, exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Bắt đầu học", exact: true }).click();
+  await expect(page).toHaveURL(/phien-hoc\?session=/);
+  const sessionURL = page.url();
+  const draft = "Bản nháp cần được giữ sau khi đóng tab và đổi thiết bị.";
+  await page.getByLabel("Suy nghĩ của em", { exact: true }).fill(draft);
+  await page.getByRole("button", { name: "Lưu và học sau", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Bài học của tôi", exact: true })).toBeVisible();
+  const sessions = await (await page.request.get("/api/sessions")).json();
+  expect(sessions).toHaveLength(1);
+  expect(
+    sessions[0].turns.filter((turn: { kind: string }) => turn.kind === "student"),
+  ).toHaveLength(0);
+  await page.getByRole("link", { name: "Tiếp tục học", exact: true }).click();
+  await expect(page.getByLabel("Suy nghĩ của em", { exact: true })).toHaveValue(draft);
+  await page.close();
+  const freshContext = await browser.newContext({ baseURL: baseURL! });
+  const fresh = await freshContext.newPage();
+  await fresh.goto(sessionURL);
+  await expect(fresh.getByRole("heading", { name: "Chào mừng bạn trở lại" })).toBeVisible();
+  await login(fresh, email);
+  await expect(fresh).toHaveURL(sessionURL);
+  await expect(fresh.getByLabel("Suy nghĩ của em", { exact: true })).toHaveValue(draft);
+  await fresh.getByRole("button", { name: "Đăng xuất", exact: true }).click();
+  await fresh.goto(sessionURL);
+  await login(fresh, email);
+  await expect(fresh.getByLabel("Suy nghĩ của em", { exact: true })).toHaveValue(draft);
+  await freshContext.close();
+});
+
+test("lesson collection never starts AI and each lesson keeps its own draft", async ({ page }) => {
+  await register(page);
+  await quick(page, "Hãy giải thích vai trò của sự kiên trì trong học tập.");
+  await page
+    .getByLabel("Suy nghĩ của em", { exact: true })
+    .fill("Bản nháp riêng của phiên thứ nhất");
+  await page.getByRole("button", { name: "Lưu và học sau" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await quick(page, "Hãy trình bày suy nghĩ về tình bạn trong cuộc sống.");
+  await page
+    .getByLabel("Suy nghĩ của em", { exact: true })
+    .fill("Bản nháp riêng của phiên thứ hai");
+  await page.getByRole("button", { name: "Bài học của tôi" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  let aiStarts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /\/api\/sessions(?:$|\/.*\/prepare)/.test(request.url()))
+      aiStarts++;
+  });
+  await page.reload();
+  await expect(page.getByRole("list", { name: "Danh sách bài học" }).locator("li")).toHaveCount(2);
+  await page.screenshot({ path: "../artifacts/ui-sessions-desktop.png", fullPage: true });
+  await page.getByRole("textbox", { name: "Tìm bài học" }).fill("kiên trì");
+  await page.getByRole("button", { name: /^Đang học \(/ }).click();
+  expect(aiStarts).toBe(0);
+  await page.getByRole("link", { name: "Tiếp tục học", exact: true }).click();
+  await expect(page.getByLabel("Suy nghĩ của em", { exact: true })).toHaveValue(
+    "Bản nháp riêng của phiên thứ nhất",
+  );
+});
+
+test("start the second question directly and resume its exact session from one lesson row", async ({
   page,
 }) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Chào mừng bạn trở lại" })).toBeVisible();
-  await register(page, "first-student@example.com", "Bạn thứ nhất");
-  await expect(page.getByText("Bạn chưa có đề tự học.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Lớp học", exact: true })).toHaveCount(0);
-  await page.goto("/phien-hoc");
-  await expect(page.getByRole("heading", { name: "Bắt đầu phiên tự học đầu tiên" })).toBeVisible();
-  await expect.poll(async () => (await page.request.get("/api/sessions")).json()).toEqual([]);
-
-  await page.getByRole("link", { name: "Thêm đề tự học", exact: true }).click();
-  await page.getByRole("button", { name: "Tạo đề bài", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "Tên đề", exact: true })
-    .fill("Tự học về ý nghĩa của đọc sách");
-  await page
-    .getByRole("textbox", { name: "Nội dung đề", exact: true })
-    .fill("Hãy trình bày quan điểm về ý nghĩa của việc đọc sách và đưa ra dẫn chứng cụ thể.");
-  await page.getByRole("button", { name: "Tiếp tục", exact: true }).click();
-  await page.getByLabel("Dạng bài").selectOption("social");
-  await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
-  await expect(page.getByRole("heading", { name: "Tự học về ý nghĩa của đọc sách" })).toBeVisible();
-  await page.getByRole("button", { name: "Xin gợi ý", exact: true }).click();
-  await expect(page.getByText("Đọc lại yêu cầu và chọn một ý để tập trung trả lời.")).toBeVisible();
-
-  const answer = page.getByPlaceholder("Viết suy nghĩ của em tại đây...");
-  await answer.fill("Bản nháp của em được giữ khi tải lại trang.");
-  await page.reload();
-  await expect(answer).toHaveValue("Bản nháp của em được giữ khi tải lại trang.");
-  await expect(page.getByText("Đọc lại yêu cầu và chọn một ý để tập trung trả lời.")).toBeVisible();
-  for (let index = 0; index < 6; index++) {
-    await answer.fill(
-      `Câu trả lời ${index + 1}: em tìm dẫn chứng trong văn bản và giải thích mối liên hệ với luận điểm.`,
-    );
-    await page.getByRole("button", { name: "Gửi câu trả lời" }).click();
-    await expect(page.getByText("Đã lưu câu trả lời vào phiên tự học của bạn.")).toHaveCount(
-      index + 1,
-    );
-  }
-  await expect(page.getByText("Hoàn thành chuỗi câu hỏi", { exact: true })).toBeVisible();
-  const essay =
-    "Bài viết tự học: việc đọc sách giúp mở rộng góc nhìn khi người đọc biết kiểm tra dẫn chứng và phản biện lập luận.";
-  await page.getByPlaceholder("Viết bài làm của em…").fill(essay);
-  await page.reload();
-  await expect(page.getByPlaceholder("Viết bài làm của em…")).toHaveValue(essay);
-  await page.getByRole("button", { name: "Lưu bài viết & hoàn thành" }).click();
-  await expect(page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" })).toBeVisible();
-  await page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" }).click();
-  await expect(page.getByRole("heading", { name: "Tiến trình tự học" })).toBeVisible();
-  await page.getByText("Bài viết cuối phiên", { exact: true }).click();
-  await expect(page.getByText(essay, { exact: true })).toBeVisible();
-  await expect(page.getByText("Chờ đánh giá", { exact: true })).toHaveCount(0);
-  await page.getByRole("link", { name: "Xem lại đối thoại" }).click();
-  await expect(page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" })).toBeVisible();
-  const completedSessions = await (await page.request.get("/api/sessions")).json();
-  await page.goto("/de-bai");
-  await expect(page.getByRole("button", { name: "Hoàn thành 1", exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "Xem kết quả", exact: true }).click();
-  await expect(page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" })).toBeVisible();
-  expect((await (await page.request.get("/api/sessions")).json())[0].id).toBe(
-    completedSessions[0].id,
-  );
-  await page.goto("/giao-vien");
-  await expect(page.getByRole("heading", { name: "Không tìm thấy trang" })).toBeVisible();
-  expect(errors).toEqual([]);
-});
-
-test("upload, edit extracted text before confirmation and navigate on mobile", async ({ page }) => {
-  await register(page, "second-student@example.com", "Bạn thứ hai");
-  await page.goto("/de-bai");
-  const before = await (await page.request.get("/api/assignments")).json();
-  await page.getByRole("button", { name: "Tạo đề bài", exact: true }).click();
-  await page.getByLabel("Chọn tệp đề bài").setInputFiles({
-    name: "De-luyen-tap.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from(
-      "Hãy trình bày quan điểm về trách nhiệm với cộng đồng và đưa ra dẫn chứng.",
-    ),
+  await register(page);
+  const csrf = await (await page.request.get("/api/auth/csrf")).json();
+  const result = await page.request.post("/api/learning/assignments", {
+    headers: { "X-CSRF-Token": csrf.csrf_token },
+    data: {
+      title: "Đề có hai câu hỏi",
+      items: [
+        { label: "Câu 1", prompt: "Nêu ý nghĩa của việc đọc sách.", item_type: "reading" },
+        {
+          label: "Câu 2",
+          prompt: "Giải thích một góc nhìn khác về việc đọc sách.",
+          item_type: "reading",
+        },
+      ],
+    },
   });
-  await expect(page.getByText("Đã trích xuất văn bản.", { exact: false })).toBeVisible();
-  expect(await (await page.request.get("/api/assignments")).json()).toHaveLength(before.length);
-  await page.getByRole("textbox", { name: "Tên đề", exact: true }).fill("Đề riêng về trách nhiệm");
-  const edited =
-    "Viết đoạn văn về trách nhiệm của tuổi trẻ với cộng đồng, có dẫn chứng và phản biện.";
-  await page.getByRole("textbox", { name: "Nội dung đề", exact: true }).fill(edited);
-  await page.getByRole("button", { name: "Tiếp tục", exact: true }).click();
-  await page.getByLabel("Dạng bài").selectOption("social");
-  await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
-  await expect(page.getByRole("heading", { name: "Đề riêng về trách nhiệm" })).toBeVisible();
-  await page.getByRole("button", { name: "Xem đề bài", exact: true }).click();
-  await expect(page.getByRole("dialog").getByText(edited, { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Đóng đề bài", exact: true }).click();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Mở menu" }).click();
-  await page.getByRole("link", { name: "Đề bài của tôi", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Đề bài của tôi" })).toBeVisible();
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-  ).toBeTruthy();
-  await page.screenshot({ path: "../artifacts/self-study-mobile.png", fullPage: true });
+  const assignment = await result.json();
+  await page.goto(`/?lesson=${assignment.id}`);
+  await page
+    .getByRole("listitem")
+    .filter({ hasText: "Giải thích một góc nhìn khác về việc đọc sách." })
+    .last()
+    .getByRole("link", { name: "Học câu này", exact: true })
+    .click();
+  await expect(page).toHaveURL(/phien-hoc\?session=/);
+  const sessions = await (await page.request.get("/api/sessions")).json();
+  expect(sessions).toHaveLength(1);
+  expect(sessions[0].assignment.active_item_id).toBe(assignment.items[1].id);
+  const exact = page.url();
+  await page.getByRole("button", { name: "Bài học của tôi" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(
+    page.getByRole("list", { name: "Danh sách bài học" }).getByRole("listitem"),
+  ).toHaveCount(1);
+  await page.getByRole("link", { name: "Tiếp tục học", exact: true }).click();
+  await expect(page).toHaveURL(exact);
 });
 
-test("logout clears authentication, cookie JWTs stay unreadable, and login restores only your data", async ({
+test("creation and aggregate statistics do not repeat the lesson collection", async ({ page }) => {
+  await register(page);
+  const title = "Nêu suy nghĩ về việc tự học có trách nhiệm.";
+  await quick(page, title, true);
+  await page.goto("/");
+  const primary = page.getByRole("navigation", { name: "Điều hướng chính" });
+  await expect(primary.getByRole("link")).toHaveCount(2);
+  await expect(
+    page.getByRole("list", { name: "Danh sách bài học" }).getByRole("listitem"),
+  ).toHaveCount(1);
+  for (const path of ["/de-bai?tab=quick", "/de-bai?tab=documents", "/tien-trinh"]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", {
+        name: path.startsWith("/de-bai") ? "Thêm bài học" : "Thống kê học tập",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("list", { name: "Danh sách bài học" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: title, exact: true })).toHaveCount(0);
+    await expect(page.getByText("Lịch sử tài liệu", { exact: true })).toHaveCount(0);
+  }
+  await page.screenshot({ path: "../artifacts/ui-statistics-desktop.png", fullPage: true });
+  await page.goto("/de-bai?tab=quick");
+  await page.screenshot({ path: "../artifacts/ui-create-desktop.png", fullPage: true });
+  await page.goto("/phien-hoc");
+  await expect(page).toHaveURL(/\/$/);
+  expect(await (await page.request.get("/api/sessions")).json()).toHaveLength(0);
+});
+
+test("navigation collapses on every page, survives reload, and mobile screens fit", async ({
+  page,
+}) => {
+  await register(page);
+  const sidebar = page.getByRole("complementary", { name: "Thanh điều hướng" });
+  for (const path of ["/", "/de-bai", "/phien-hoc", "/tien-trinh"]) {
+    await page.goto(path);
+    await page.getByRole("button", { name: "Thu gọn thanh điều hướng", exact: true }).click();
+    await expect(sidebar).toHaveCSS("width", "64px");
+    await page.reload();
+    await expect(sidebar).toHaveCSS("width", "64px");
+    await page.getByRole("button", { name: "Mở rộng thanh điều hướng", exact: true }).click();
+    await expect(sidebar).toHaveCSS("width", "248px");
+  }
+  for (const width of [320, 390, 768, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const path of [
+      "/",
+      "/de-bai",
+      "/de-bai?tab=quick",
+      "/de-bai?tab=documents",
+      "/phien-hoc",
+      "/tien-trinh",
+    ]) {
+      await page.goto(path);
+      await expect(page.locator("main")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Mở menu", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("link", { name: "Bài học của tôi", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: "Bài học của tôi", exact: true })).toBeVisible();
+  await page.screenshot({ path: "../artifacts/ui-library-mobile.png", fullPage: true });
+});
+
+test("a failed draft save prevents a false saved-and-exited success", async ({ page }) => {
+  await register(page);
+  await quick(page, "Hãy phân tích vai trò của dẫn chứng trong một bài nghị luận.");
+  await page.route("**/api/sessions/*/draft", (route) =>
+    route.request().method() === "PUT" ? route.abort("failed") : route.continue(),
+  );
+  await page
+    .getByLabel("Suy nghĩ của em", { exact: true })
+    .fill("Nội dung không được phép mất khi mạng lỗi");
+  await page.getByRole("button", { name: "Lưu và học sau" }).click();
+  await expect(page.getByRole("button", { name: "Thử lưu lại", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/phien-hoc\?session=/);
+  await page.getByRole("button", { name: "Bài học của tôi", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.unroute("**/api/sessions/*/draft");
+  await page.getByRole("link", { name: "Tiếp tục học", exact: true }).click();
+  await expect(page.getByLabel("Suy nghĩ của em", { exact: true })).toHaveValue(
+    "Nội dung không được phép mất khi mạng lỗi",
+  );
+  await page.getByRole("button", { name: "Lưu và học sau" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { name: "Bài học của tôi", exact: true })).toBeVisible();
+});
+
+test("authentication stays private, refreshes access and isolates another learner's library", async ({
   page,
   context,
 }) => {
-  await page.goto("/dang-nhap");
-  await page.getByRole("textbox", { name: "Email", exact: true }).fill("first-student@example.com");
-  await page.getByLabel("Mật khẩu", { exact: true }).fill("incorrect password");
-  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveText("Email hoặc mật khẩu không đúng.");
-  await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
-  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
-  await expect(page.getByText("Bạn thứ nhất", { exact: true })).toBeVisible();
-  await page.goto("/de-bai");
-  await expect(page.getByRole("heading", { name: "Tự học về ý nghĩa của đọc sách" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Đề riêng về trách nhiệm" })).toHaveCount(0);
-  const cookies = await context.cookies();
+  const email = await register(page);
+  const title = "Đề riêng của tài khoản thứ nhất cần được giữ kín.";
+  await quick(page, title, true);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   expect(
-    cookies
+    (await context.cookies())
       .filter((cookie) => cookie.name.startsWith("socratic_"))
       .every((cookie) => cookie.httpOnly),
   ).toBe(true);
-  expect(await page.evaluate(() => document.cookie)).not.toContain("socratic_access");
-  expect(await page.evaluate(() => document.cookie)).not.toContain("socratic_refresh");
-  expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([]);
+  expect(await page.evaluate(() => document.cookie)).not.toMatch(/socratic_(access|refresh)/);
   await context.clearCookies({ name: "socratic_access" });
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Đề bài của tôi", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   expect((await context.cookies()).some((cookie) => cookie.name === "socratic_access")).toBe(true);
   await page.getByRole("button", { name: "Đăng xuất", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Chào mừng bạn trở lại" })).toBeVisible();
   expect((await context.cookies()).some((cookie) => cookie.name.startsWith("socratic_"))).toBe(
     false,
   );
-  await page.goto("/tien-trinh");
-  await expect(page.getByRole("heading", { name: "Chào mừng bạn trở lại" })).toBeVisible();
+  await register(page);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Chưa có bài học", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: title, exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Đăng xuất", exact: true }).click();
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill(email);
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("incorrect password");
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Email hoặc mật khẩu không đúng.");
+  await login(page, email);
+  await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
 });

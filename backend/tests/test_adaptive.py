@@ -158,11 +158,39 @@ def test_adaptive_full_flow_report_and_retry_idempotency(client):
     assert result.status_code == 200, result.text
     session = result.json()
     report = session["assessment"]
-    assert (report["bloom"], report["hint_count"], report["autonomy"], report["score"]) == (90, 2, .8, 72)
+    assert (report["bloom"], report["hint_count"], report["score"]) == (90, 2, 76)
+    assert report["autonomy"] == pytest.approx(.8444444444444444)
+    assert report["scoring_version"] == session["scoring_version"] == "bloom-autonomy-2.0"
     assert report["classification"] == "Tư duy Khá"
     assert client.get(f"/api/sessions/{session['id']}").json() == session
     assert client.get("/api/progress").json()["sessions"][0]["assessment"] == report
     assert action(client, session, "messages", text="Thay lịch sử").status_code == 409
+
+
+def test_new_scoring_applies_on_submission_but_saved_legacy_reports_are_unchanged(client, database):
+    session = answer(client, start(client))
+    for _ in range(2):
+        session = action(client, session, "hints").json()
+    session = action(client, session, "finish").json()
+    with database.connect(write=True) as conn:
+        saved = database.get(conn, "sessions", session["id"], owner_id=client.user_id)
+        saved["scoring_version"] = "bloom-autonomy-1.0"
+        database.put(conn, "sessions", session["id"], saved, owner_id=client.user_id)
+    result = finish_and_submit(client, session)
+    assert result.status_code == 200, result.text
+    session = result.json()
+    assert session["assessment"]["score"] == 76
+    assert session["scoring_version"] == session["assessment"]["scoring_version"] == "bloom-autonomy-2.0"
+
+    legacy = session["assessment"] | {
+        "autonomy": .8, "score": 72, "raw_score": "72.0", "scoring_version": "bloom-autonomy-1.0",
+    }
+    with database.connect(write=True) as conn:
+        saved = database.get(conn, "sessions", session["id"], owner_id=client.user_id)
+        saved.update(assessment=legacy, scoring_version="bloom-autonomy-1.0")
+        database.put(conn, "sessions", session["id"], saved, owner_id=client.user_id)
+    assert client.get(f"/api/sessions/{session['id']}").json()["assessment"] == legacy
+    assert client.get("/api/progress").json()["sessions"][0]["assessment"] == legacy
 
 
 def test_hint_check_in_keeps_question_and_does_not_become_student_evidence(client, tutor):
@@ -188,6 +216,9 @@ def test_hint_check_in_keeps_question_and_does_not_become_student_evidence(clien
     assert len(calls) == 3
     reloaded = client.get(f"/api/sessions/{session['id']}").json()
     assert reloaded["support_state"] == session["support_state"]
+    draft_path = f"/api/sessions/{session['id']}/draft"
+    assert client.put(draft_path, json={"answer": "Ý đang viết trước khi chọn chỗ vướng", "essay": "",
+        "revision": 0, "expected_version": session["version"]}).status_code == 200
     body = {"expected_version": session["version"], "client_message_id": "clarify-once", "difficulty": "ideas"}
     path = f"/api/sessions/{session['id']}/hints"
     result = client.post(path, json=body)
@@ -196,6 +227,7 @@ def test_hint_check_in_keeps_question_and_does_not_become_student_evidence(clien
     assert client.post(path, json=body).json() == session
     assert len(calls) == 4 and len(session["support_events"]) == 4
     assert session["turns"][-2]["purpose"] == "clarification"
+    assert client.get(draft_path).json()["answer"] == "Ý đang viết trước khi chọn chỗ vướng"
     assert session["support_state"]["difficulty"] == "ideas"
     assert session["support_state"]["consecutive_hints"] == 1
     assert not session["support_state"]["needs_check_in"]

@@ -20,7 +20,7 @@ from .structure import structure_text, question_context
 from .jobs import JobQueue
 from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput, HintInput, MessageInput, SubmissionInput,
                       MultiAssignmentInput, SessionTurnInput, SessionItemStatusInput, SessionSelectItemInput,
-                      DocumentReviewInput, TextDocumentInput, QuickTaskInput)
+                      DocumentReviewInput, TextDocumentInput, QuickTaskInput, SessionDraftInput)
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 from .ai_tutor import OpenAITutor
 from .adaptive import AdaptiveSessions, public_pending
@@ -343,10 +343,17 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def assignments(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
             items = [a for a in db.all(conn, "assignments", owner_id=user.id) if a.get("source") != "legacy_seed"]
+            # Saved multi-question tasks must be visible before their first session.
+            relational = [_multi_assignment(conn, row["id"], user.id) for row in db.execute(
+                conn, "SELECT id FROM assignments WHERE owner_id=? ORDER BY created_at DESC", (user.id,)).fetchall()]
+            relational_ids = {a["id"] for a in relational}
+            items = relational + [a for a in items if a["id"] not in relational_ids]
             sessions = saved_sessions(conn, user.id)
             for a in items:
-                session = next((s for s in sessions if s["assignment_id"] == a["id"]), None)
-                a["status"] = "Đã hoàn thành" if session and session["submitted"] else "Đang học" if session else "Chưa bắt đầu"
+                saved = [s for s in sessions if s["assignment_id"] == a["id"]]
+                session = next((s for s in saved if not s["submitted"]), saved[0] if saved else None)
+                all_submitted = bool(saved) and all(s["submitted"] for s in saved) and len(saved) >= len(a.get("items") or [None])
+                a["status"] = "Đã hoàn thành" if all_submitted else "Đang học" if saved else "Chưa bắt đầu"
                 a["progress"] = (100 if session and session["submitted"] else
                                  round(session["step"] / len(session["steps"]) * 100)
                                  if session and session.get("steps") else 0)
@@ -559,18 +566,22 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             saved = [s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id]
             ordered_items = db.execute(conn, """SELECT id, label, prompt, context, item_type
                 FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (body.assignment_id,)).fetchall()
-            first_item_id = ordered_items[0]["id"] if ordered_items else None
+            if body.item_id and not any(item["id"] == body.item_id for item in ordered_items):
+                raise HTTPException(404, "Không tìm thấy câu hỏi đã chọn")
+            initial_item = next((item for item in ordered_items if item["id"] == body.item_id),
+                                ordered_items[0] if ordered_items else None)
+            first_item_id = initial_item["id"] if initial_item else None
             existing = next((s for s in saved
                              if not first_item_id or
                              (s.get("assignment") or {}).get("active_item_id") in {None, first_item_id}), None)
             existing = existing or (saved[0] if saved and not first_item_id else None)
             if existing and ordered_items:
                 selected = next((entry for entry in ordered_items if entry["id"] ==
-                                 (existing.get("assignment") or {}).get("active_item_id")), ordered_items[0])
+                                 (existing.get("assignment") or {}).get("active_item_id")), initial_item)
                 existing["assignment"] = item_assignment(existing["assignment"], selected, ordered_items)
                 db.put(conn, "sessions", existing["id"], existing, owner_id=user.id)
             elif ordered_items:
-                assignment = item_assignment(assignment, ordered_items[0], ordered_items)
+                assignment = item_assignment(assignment, initial_item, ordered_items)
         if existing:
             return public_session(adaptive.prepare_item(existing["id"], user.id)
                                   if existing.get("tutor_mode") == "openai" else existing)
@@ -581,7 +592,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         with db.connect(write=True) as conn:
             assignment = require(conn, "assignments", body.assignment_id, user.id)
             if ordered_items:
-                assignment = item_assignment(assignment, ordered_items[0], ordered_items)
+                assignment = item_assignment(assignment, initial_item, ordered_items)
             # Repeated starts (including a remount or double click) resume the saved session.
             existing = next((s for s in saved_sessions(conn, user.id)
                              if s["assignment_id"] == body.assignment_id and
@@ -645,6 +656,40 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def get_session(session_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
             return public_session(require(conn, "sessions", session_id, user.id))
+
+    def draft_payload(conn, session_id, owner_id):
+        session = require(conn, "sessions", session_id, owner_id)
+        draft = Database.get(conn, "session_drafts", session_id, owner_id=owner_id) or {
+            "answer": "", "essay": "", "revision": 0, "updated_at": None,
+        }
+        # A sent answer must never reappear as an unsent draft after a reload.
+        student_turns = sum(turn["kind"] == "student" and turn.get("purpose") != "clarification" for turn in session["turns"])
+        if draft.get("student_turns", student_turns) != student_turns:
+            draft["answer"] = ""
+        if session["submitted"]:
+            draft["answer"] = draft["essay"] = ""
+        return draft
+
+    @app.get("/api/sessions/{session_id}/draft", tags=["Sessions"])
+    def get_session_draft(session_id: str, user: Principal = Depends(auth.current_user)):
+        with db.connect() as conn:
+            return draft_payload(conn, session_id, user.id)
+
+    @app.put("/api/sessions/{session_id}/draft", tags=["Sessions"])
+    def save_session_draft(session_id: str, body: SessionDraftInput,
+                           user: Principal = Depends(auth.current_user)):
+        with db.connect(write=True) as conn:
+            session = require(conn, "sessions", session_id, user.id)
+            current = draft_payload(conn, session_id, user.id)
+            if session["submitted"] or session["version"] != body.expected_version:
+                raise HTTPException(409, "Phiên học đã thay đổi. Mở lại phiên để đồng bộ trước khi lưu nháp.")
+            if current["revision"] != body.revision:
+                raise HTTPException(409, "Bản nháp đã thay đổi ở một tab hoặc thiết bị khác. Tải bản mới trước khi tiếp tục.")
+            draft = {"answer": body.answer, "essay": body.essay,
+                     "revision": current["revision"] + 1, "updated_at": now(),
+                     "student_turns": sum(turn["kind"] == "student" and turn.get("purpose") != "clarification" for turn in session["turns"])}
+            Database.put(conn, "session_drafts", session_id, draft, owner_id=user.id)
+            return draft
 
     @app.post("/api/sessions/{session_id}/prepare", tags=["Sessions"])
     def prepare_session(session_id: str, user: Principal = Depends(auth.current_user)):

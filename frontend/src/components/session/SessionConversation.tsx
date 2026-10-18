@@ -149,7 +149,7 @@ export function SessionConversation({ session }: { session: Session }) {
                         {source && (
                           <p className="flex items-start gap-1.5">
                             <BookOpen aria-hidden="true" className="mt-1 size-3.5 shrink-0" />
-                            Gia sư đang cần thêm ngữ liệu. Yêu cầu bổ sung ngữ liệu không phải lượt
+                            Trợ lý đang cần thêm ngữ liệu. Yêu cầu bổ sung ngữ liệu không phải lượt
                             gợi ý.
                           </p>
                         )}

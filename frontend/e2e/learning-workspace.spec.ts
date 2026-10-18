@@ -9,34 +9,27 @@ async function createSession(page: Page, title: string) {
   await page.getByLabel("Mật khẩu", { exact: true }).fill("Strong test password 123");
   await page.getByLabel("Xác nhận mật khẩu", { exact: true }).fill("Strong test password 123");
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
-  ).toBeVisible();
-  await page.goto("/de-bai");
-  await page.getByRole("button", { name: "Tạo đề bài", exact: true }).click();
-  await page.getByRole("textbox", { name: "Tên đề", exact: true }).fill(title);
-  await page
-    .getByRole("textbox", { name: "Nội dung đề", exact: true })
-    .fill(
-      [
-        "Em hãy bàn về mối quan hệ giữa tài năng, nỗ lực và thành công. Dùng dẫn chứng để làm rõ suy nghĩ của em.",
-        "Giải thích cách em hiểu về tài năng và sự nỗ lực. Xác định những điều kiện giúp một người phát triển năng lực của mình.",
-        "Phân tích một trường hợp trong học tập hoặc đời sống. Chỉ ra vai trò của quá trình rèn luyện đối với kết quả đạt được.",
-        "Xem xét ý kiến cho rằng tài năng quyết định mọi thành công. Em đồng tình đến mức nào và dựa vào căn cứ nào?",
-        "Lựa chọn dẫn chứng cụ thể, giải thích mối liên hệ giữa dẫn chứng với nhận định. Đối chiếu với một góc nhìn khác.",
-        "Từ những suy nghĩ trên, đề xuất cách học và rèn luyện phù hợp với bản thân. Trình bày kết luận bằng lời của em.",
-      ].join("\n\n"),
-    );
-  await page.getByRole("button", { name: "Tiếp tục", exact: true }).click();
-  await page.getByLabel("Khối lớp", { exact: false }).selectOption("11");
-  await page
-    .getByLabel("Ngữ liệu / đoạn trích liên quan")
-    .fill(
-      "Mỗi người đều có thể tiến bộ khi kiên trì học hỏi và biết lắng nghe những góc nhìn khác.\n".repeat(
-        40,
-      ),
-    );
-  await page.getByRole("button", { name: "Lưu & bắt đầu học" }).click();
+  await expect(page.getByRole("heading", { name: "Bài học của tôi" })).toBeVisible();
+  const csrf = await (await page.request.get("/api/auth/csrf")).json();
+  const response = await page.request.post("/api/assignments", {
+    headers: { "X-CSRF-Token": csrf.csrf_token },
+    data: {
+      title,
+      prompt:
+        "Em hãy bàn về mối quan hệ giữa tài năng, nỗ lực và thành công. Dùng dẫn chứng để làm rõ suy nghĩ của em. ".repeat(
+          18,
+        ),
+      source_text:
+        "Mỗi người đều có thể tiến bộ khi kiên trì học hỏi và biết lắng nghe những góc nhìn khác.\n".repeat(
+          40,
+        ),
+      task_type: "social",
+      grade: 11,
+    },
+  });
+  expect(response.status()).toBe(201);
+  const assignment = await response.json();
+  await page.goto(`/phien-hoc?assignment=${assignment.id}`);
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   await expect(page.getByRole("log").locator("li")).toHaveCount(1);
   await expect(page.getByText("Đã lưu đề bài. Đang mở phiên học…", { exact: true })).toBeHidden({
@@ -68,7 +61,7 @@ for (const adaptive of [false, true]) {
       await expect(answer).toHaveAttribute("placeholder", "Viết suy nghĩ của em tại đây...");
       expect(
         (await page.getByRole("complementary", { name: "Thanh điều hướng" }).boundingBox())!.width,
-      ).toBe(232);
+      ).toBe(248);
       expect(
         (await page.getByRole("complementary", { name: "Thông tin học tập" }).boundingBox())!.width,
       ).toBeCloseTo(345.6, 1);
@@ -176,9 +169,9 @@ for (const adaptive of [false, true]) {
         expect((await desktopPanel.boundingBox())!.width).toBeCloseTo(panelWidth!, 1);
         const group = (await page.locator(".learning-workspace").boundingBox())!;
         expect(group.width).toBeLessThanOrEqual(1360);
-        expect(group.x - 232).toBeCloseTo((width! - 232 - group.width) / 2, 1);
+        expect(group.x - 248).toBeCloseTo((width! - 248 - group.width) / 2, 1);
         const chat = (await page
-          .getByRole("region", { name: "Không gian đối thoại Socratic" })
+          .getByRole("region", { name: "Không gian học cùng Trợ lý ảo" })
           .boundingBox())!;
         expect((await desktopPanel.boundingBox())!.x - (chat.x + chat.width)).toBeCloseTo(24, 1);
         await expect(send).toBeInViewport();
@@ -232,7 +225,7 @@ for (const adaptive of [false, true]) {
             expect(
               (await page.getByRole("complementary", { name: "Thanh điều hướng" }).boundingBox())!
                 .width,
-            ).toBe(64);
+            ).toBe(248);
           await page.getByRole("button", { name: "Mở thông tin học tập", exact: true }).click();
           const panel = page.getByRole("dialog", { name: "Thông tin học tập", exact: true });
           await expect(panel.getByRole("tab", { name: "Đề bài", exact: true })).toBeVisible();
@@ -248,7 +241,10 @@ for (const adaptive of [false, true]) {
             page.getByRole("button", { name: "Mở thông tin học tập", exact: true }),
           ).toBeFocused();
         }
-        await page.getByRole("button", { name: "Xem đề bài", exact: true }).click();
+        await page
+          .locator(".learning-session-header")
+          .getByRole("button", { name: "Xem đề bài", exact: true })
+          .click();
         const source = page.getByRole("dialog", { name: "Đề bài của em", exact: true });
         await expect(
           source.getByRole("heading", { name: "Ngữ liệu / đoạn trích", exact: true }),
@@ -273,7 +269,7 @@ for (const adaptive of [false, true]) {
         ).join("\n"),
       );
       expect((await answer.boundingBox())!.height).toBeLessThanOrEqual(200);
-      expect((await answer.boundingBox())!.height).toBeGreaterThanOrEqual(96);
+      expect((await answer.boundingBox())!.height).toBeGreaterThanOrEqual(40);
       await expect(send).toBeInViewport();
       expect(await history.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(
         true,

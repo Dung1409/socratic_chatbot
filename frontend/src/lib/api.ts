@@ -11,7 +11,7 @@ export type Assignment = {
   excerpt?: string;
   status: string;
   progress: number;
-  task_type?: "reading" | "social" | "literary" | "other";
+  task_type?: "reading" | "social" | "literary" | "mixed" | "other";
   source_text?: string;
   items?: AssignmentItem[];
   active_item_id?: string;
@@ -114,6 +114,13 @@ export type Dashboard = {
   hints_per_answer: number;
   submitted: number;
   latest_session: Session | null;
+};
+
+export type SessionDraft = {
+  answer: string;
+  essay: string;
+  revision: number;
+  updated_at: string | null;
 };
 export type Progress = {
   bloom_profile: { skill: string; value: number }[];
@@ -489,8 +496,15 @@ export const api = {
   progress: () => request<Progress>("/progress"),
   sessions: () => request<Session[]>("/sessions"),
   session: (id: string) => request<Session>(`/sessions/${id}`),
+  sessionDraft: (id: string) => request<SessionDraft>(`/sessions/${id}/draft`),
+  saveSessionDraft: (
+    id: string,
+    body: { answer: string; essay: string; revision: number; expected_version: number },
+  ) =>
+    request<SessionDraft>(`/sessions/${id}/draft`, { method: "PUT", body: JSON.stringify(body) }),
   prepareSession: (id: string) => post<Session>(`/sessions/${id}/prepare`, {}),
-  start: (id: string) => post<Session>("/sessions", { assignment_id: id }),
+  start: (id: string, item?: string) =>
+    post<Session>("/sessions", { assignment_id: id, ...(item ? { item_id: item } : {}) }),
   selectSessionItem: (sessionId: string, itemId: string) =>
     post<Session>(`/sessions/${sessionId}/select-item`, { item_id: itemId }),
   message: (session: Session, text: string, key: string) =>

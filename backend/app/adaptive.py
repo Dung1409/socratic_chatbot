@@ -193,7 +193,8 @@ class AdaptiveSessions:
             if action == "submit":
                 draft = self.tutor.assess(working, body.essay)
                 report = build_report(draft, working, body.essay, working["assessment_model"])
-                working.update(essay=body.essay, submitted=True, submitted_at=timestamp(), assessment=report)
+                working.update(essay=body.essay, submitted=True, submitted_at=timestamp(), assessment=report,
+                               scoring_version=report["scoring_version"])
             else:
                 if action == "hint" and getattr(body, "difficulty", None):
                     working["turns"].append({

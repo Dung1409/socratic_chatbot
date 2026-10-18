@@ -4,8 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type HintDifficulty, type Session } from "@/lib/api";
-import { useAuth } from "@/components/AuthProvider";
-import { AssessmentReport } from "@/components/AssessmentReport";
+import { useSessionDraft } from "@/hooks/use-session-draft";
 import { SessionWorkspace } from "@/components/session/SessionWorkspace";
 import { SessionConversation } from "@/components/session/SessionConversation";
 import { SessionComposer } from "@/components/session/SessionComposer";
@@ -24,20 +23,11 @@ export function AdaptiveSessionView({
   session: Session;
   queryKey: string[];
 }) {
-  const { user } = useAuth();
   const client = useQueryClient();
   const navigate = useNavigate();
-  const draftKey = `socratic:${user?.id}:draft:${session.id}`;
-  const essayKey = `socratic:${user?.id}:essay:${session.id}`;
   const pending = session.pending_action;
-  const [draft, setDraft] = useState(
-    () => sessionStorage.getItem(draftKey) || (pending?.action === "message" ? pending.text : ""),
-  );
-  const [essay, setEssay] = useState(
-    () =>
-      sessionStorage.getItem(essayKey) ||
-      (pending?.action === "submit" ? pending.text : session.essay),
-  );
+  const draftState = useSessionDraft(session);
+  const { draft, essay, setDraft, setEssay } = draftState;
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<Action | null>(null);
   const [error, setError] = useState("");
@@ -53,11 +43,12 @@ export function AdaptiveSessionView({
   const answers = session.turns.filter(
     (t) => t.kind === "student" && (!t.purpose || t.purpose === "answer"),
   );
-  const blocked = busy || Boolean(pending);
+  const blocked = busy || Boolean(pending) || !draftState.ready || draftState.hasConflict;
   const selectItem = async (itemId: string) => {
     if (blocked || itemId === session.assignment.active_item_id) return;
     setBusy(true);
     try {
+      if (!(await draftState.save())) return;
       const selected = await api.selectSessionItem(session.id, itemId);
       client.setQueryData(["session", selected.id], selected);
       await navigate({ to: "/phien-hoc", search: { session: selected.id } });
@@ -116,6 +107,7 @@ export function AdaptiveSessionView({
     setBusyAction(action);
     setError("");
     try {
+      if (!pending && !(await draftState.save())) return;
       const saved =
         action === "message"
           ? await api.message(operation.session, text, operation.key)
@@ -124,15 +116,12 @@ export function AdaptiveSessionView({
             : action === "submit"
               ? await api.submit(operation.session, text, operation.key)
               : await api.action(operation.session, action, operation.key);
+      draftState.committed(saved, action);
       saveSession(saved);
       request.current = null;
-      if (action === "message") {
-        setDraft("");
-        sessionStorage.removeItem(draftKey);
-      }
       if (action === "submit") {
-        sessionStorage.removeItem(essayKey);
         toast.success("Đã lưu bài làm và báo cáo cuối phiên");
+        await navigate({ to: "/", search: { lesson: session.assignment_id, view: "results" } });
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) request.current = null;
@@ -156,6 +145,9 @@ export function AdaptiveSessionView({
     <SessionWorkspace
       session={session}
       activity={blocked}
+      navigationBusy={busy && busyAction === null}
+      onSaveDraft={busy || pending ? async () => true : draftState.save}
+      draftStatus={draftState.feedback}
       onSelectItem={(itemId) => void selectItem(itemId)}
       composer={
         !session.submitted ? (
@@ -165,10 +157,8 @@ export function AdaptiveSessionView({
             onChange={(value) => {
               if (session.done) {
                 setEssay(value);
-                sessionStorage.setItem(essayKey, value);
               } else {
                 setDraft(value);
-                sessionStorage.setItem(draftKey, value);
               }
             }}
             disabled={blocked}
@@ -221,8 +211,8 @@ export function AdaptiveSessionView({
           {busyAction === "submit"
             ? "Đang đối chiếu bài làm và tính điểm…"
             : busyAction === "hint"
-              ? "Gia sư đang chuẩn bị gợi ý…"
-              : "Gia sư đang xử lý…"}
+              ? "Trợ lý đang chuẩn bị gợi ý…"
+              : "Trợ lý đang xử lý…"}
         </p>
       )}
       {session.done && !session.submitted && (
@@ -234,7 +224,6 @@ export function AdaptiveSessionView({
           </p>
         </section>
       )}
-      {session.assessment && <AssessmentReport report={session.assessment} />}
       {session.submitted && (
         <details data-session-complete className="rounded-xl border bg-card p-4 text-sm">
           <summary className="cursor-pointer font-medium">Bài viết cuối phiên</summary>

@@ -1,9 +1,15 @@
 import type { Assessment } from "@/lib/api";
 
-const number = (value: number | null) =>
-  value === null ? "—" : value.toLocaleString("vi-VN", { maximumFractionDigits: 1 });
+const number = (value: number | null, maximumFractionDigits = 1) =>
+  value === null ? "—" : value.toLocaleString("vi-VN", { maximumFractionDigits });
 
 export function AssessmentReport({ report }: { report: Assessment }) {
+  const autonomyFormula =
+    report.scoring_version === "bloom-autonomy-2.0"
+      ? "A = 0,3 + 0,7 / (1 + N/7)"
+      : report.scoring_version === "bloom-autonomy-1.0"
+        ? "A = max(0,3; 1 − 0,1 × N)"
+        : "A theo báo cáo đã lưu";
   return (
     <section
       className="rounded-xl border bg-card p-5 sm:p-6 space-y-6"
@@ -20,28 +26,34 @@ export function AssessmentReport({ report }: { report: Assessment }) {
             : `Chưa đủ dữ liệu để tính điểm tổng và xếp loại. Đã quan sát ${report.coverage}/3 tầng; tầng chưa quan sát không được tính là 0.`}
         </p>
       </div>
-      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          ["Điểm Bloom B", `${number(report.bloom)} / 100`],
-          ["Lượt hỗ trợ N", String(report.hint_count)],
-          ["Hệ số tự lực A", number(report.autonomy)],
-          ["Điểm tư duy S", `${number(report.score)} / 100`],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-lg bg-muted/50 p-3">
-            <dt className="text-xs text-muted-foreground">{label}</dt>
-            <dd className="mt-1 text-lg font-semibold tabular-nums">{value}</dd>
-          </div>
-        ))}
-      </dl>
+      <p className="text-2xl font-semibold text-primary">
+        {report.score === null
+          ? "Chưa đủ bằng chứng để tính điểm"
+          : `${number(report.score)} / 100`}
+      </p>
       {report.classification && (
         <p className="rounded-lg bg-primary-soft p-3 font-semibold text-primary">
           {report.classification}
         </p>
       )}
-      <p className="text-xs text-muted-foreground">
-        B = Cơ bản + Vận dụng + Bậc cao · A = max(0,3; 1 − 0,1 × N) · S = B × A. Điểm hiển thị được
-        làm tròn một chữ số thập phân; xếp loại dùng giá trị chưa làm tròn.
-      </p>
+      {report.strengths.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold">Điểm mạnh</h3>
+          <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+            {report.strengths.map((text, i) => (
+              <li key={i}>{text}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div>
+        <h3 className="text-sm font-semibold">Luyện tập tiếp theo</h3>
+        <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
+          {report.next_steps.map((text, i) => (
+            <li key={i}>{text}</li>
+          ))}
+        </ul>
+      </div>
       <div className="space-y-4">
         {report.dimensions.map((dimension) => (
           <div key={dimension.key} className="border-t pt-4">
@@ -75,24 +87,30 @@ export function AssessmentReport({ report }: { report: Assessment }) {
           </div>
         ))}
       </div>
-      {report.strengths.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold">Điểm mạnh</h3>
-          <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-            {report.strengths.map((text, i) => (
-              <li key={i}>{text}</li>
+      <details className="rounded-lg border p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          Cách tính điểm và mức hỗ trợ
+        </summary>
+        <div className="mt-4 space-y-4">
+          <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {[
+              ["Điểm Bloom B", `${number(report.bloom)} / 100`],
+              ["Lượt hỗ trợ N", String(report.hint_count)],
+              ["Hệ số tự lực A", number(report.autonomy, 4)],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-lg bg-muted/50 p-3">
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd className="mt-1 text-lg font-semibold tabular-nums">{value}</dd>
+              </div>
             ))}
-          </ul>
+          </dl>
+          <p className="text-xs text-muted-foreground">
+            B = Cơ bản + Vận dụng + Bậc cao · {autonomyFormula} · S = B × A. Điểm hiển thị được làm
+            tròn một chữ số thập phân, hệ số A hiển thị tối đa bốn chữ số thập phân; xếp loại dùng
+            giá trị chưa làm tròn.
+          </p>
         </div>
-      )}
-      <div>
-        <h3 className="text-sm font-semibold">Luyện tập tiếp theo</h3>
-        <ul className="mt-2 list-disc pl-5 text-sm space-y-1">
-          {report.next_steps.map((text, i) => (
-            <li key={i}>{text}</li>
-          ))}
-        </ul>
-      </div>
+      </details>
     </section>
   );
 }

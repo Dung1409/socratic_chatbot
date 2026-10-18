@@ -12,6 +12,7 @@ import { AppShell } from "@/components/AppShell";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth } from "@/components/AuthProvider";
 import { Button } from "@/components/ui/button";
+import { safeReturnTo } from "@/lib/auth-redirect";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: Root,
@@ -48,7 +49,8 @@ function Root() {
 
 function AccessGate() {
   const auth = useAuth();
-  const path = useRouterState({ select: (state) => state.location.pathname });
+  const location = useRouterState({ select: (state) => state.location });
+  const path = location.pathname;
   const publicPage = path === "/dang-nhap" || path === "/dang-ky";
   if (auth.pending)
     return (
@@ -63,8 +65,26 @@ function AccessGate() {
         <Button onClick={auth.retry}>Thử lại</Button>
       </div>
     );
-  if (!auth.user) return publicPage ? <Outlet /> : <Navigate to="/dang-nhap" replace />;
-  if (publicPage) return <Navigate to="/" replace />;
+  if (!auth.user)
+    return publicPage ? (
+      <Outlet />
+    ) : (
+      <Navigate to="/dang-nhap" search={{ redirect: location.href }} replace />
+    );
+  if (publicPage) {
+    const target = new URL(
+      safeReturnTo((location.search as { redirect?: string }).redirect),
+      "https://local.invalid",
+    );
+    return (
+      <Navigate
+        to={target.pathname as "/phien-hoc"}
+        search={Object.fromEntries(target.searchParams)}
+        hash={target.hash.slice(1)}
+        replace
+      />
+    );
+  }
   return (
     <AppShell>
       <Outlet />

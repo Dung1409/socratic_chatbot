@@ -9,6 +9,7 @@ import { routeTree } from "@/routeTree.gen";
 afterEach(() => vi.restoreAllMocks());
 beforeEach(() => {
   sessionStorage.clear();
+  vi.spyOn(api, "sessions").mockResolvedValue([]);
   vi.spyOn(api, "documents").mockResolvedValue([]);
   vi.spyOn(api, "saveTextDocument").mockResolvedValue({ document_id: "manual-document" } as Awaited<
     ReturnType<typeof api.saveTextDocument>
@@ -128,6 +129,7 @@ it("displays a numbered prose paragraph without OCR hard line breaks", async () 
   fireEvent.change(screen.getByLabelText("Chọn tệp PDF, Word hoặc văn bản"), {
     target: { files: [new File(["test"], "de-doc-hieu.txt", { type: "text/plain" })] },
   });
+  fireEvent.click(await screen.findByRole("button", { name: "Đã kiểm tra, chọn câu" }));
   fireEvent.click(await screen.findByText(/Đọc ngữ liệu chung của phần này/));
   expect(await screen.findByText("Đoạn 1")).toBeInTheDocument();
   const paragraph = await screen.findByText("Năm 1440, tại một xưởng cơ khí nhỏ ở Mainz.");

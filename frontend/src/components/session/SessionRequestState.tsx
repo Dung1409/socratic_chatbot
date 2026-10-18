@@ -54,7 +54,7 @@ export function SessionPendingRequest({
           <Loader2 aria-hidden="true" className="mt-1 size-4 shrink-0 animate-spin text-primary" />
         )}
         {processing
-          ? "Gia sư đang xử lý… Yêu cầu đã được lưu."
+          ? "Trợ lý đang xử lý… Yêu cầu đã được lưu."
           : "Phản hồi chưa hoàn tất. Nội dung của em đã được giữ để thử lại."}
       </p>
       {pending.text && (

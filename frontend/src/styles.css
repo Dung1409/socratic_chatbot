@@ -183,7 +183,7 @@
   }
 }
 
-/* Learning workspace tokens are scoped so other pages keep their existing palette. */
+/* Shared application tokens, also used by the learning workspace and its drawers. */
 .learning-theme {
   --primary: #4f46e5;
   --primary-soft: #eef2ff;
@@ -270,7 +270,6 @@
 }
 
 /* Make room for typing when the visual viewport shrinks around a phone keyboard. */
-.learning-app[data-compact-height="true"] .learning-mobile-header,
 .learning-app[data-compact-height="true"] .learning-composer-help,
 .learning-app[data-compact-height="true"] .learning-session-meta,
 .learning-app[data-compact-height="true"] .learning-composer-labels button {
@@ -305,4 +304,36 @@
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Keep navigation and a usable conversation visible around the phone keyboard. */
+.learning-app[data-compact-height="true"] .learning-mobile-header {
+  height: 40px;
+}
+.learning-app[data-compact-height="true"] .learning-session-header h1 {
+  font-size: 14px;
+  line-height: 20px;
+}
+.learning-app[data-compact-height="true"] .learning-session-header {
+  max-height: 132px;
+  overflow-y: auto;
+}
+.learning-app[data-compact-height="true"] .learning-composer {
+  padding-top: 4px;
+}
+.learning-app[data-compact-height="true"] .learning-composer-input {
+  min-height: 40px;
+  max-height: 64px;
+}
+
+.learning-app[data-compact-height="true"] .learning-session-header > div:nth-child(2) {
+  display: none;
+}
+.learning-app[data-compact-height="true"] .learning-session-header > div:first-child {
+  margin-bottom: 0;
+}
+
+/* Keep the active lesson visible while the phone keyboard is open. */
+.learning-app[data-compact-height="true"] .learning-lesson-tabs {
+  display: none;
 }

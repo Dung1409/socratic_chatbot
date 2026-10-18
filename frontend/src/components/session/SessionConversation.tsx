@@ -76,11 +76,19 @@ export function SessionConversation({ session }: { session: Session }) {
                 <article
                   className="ml-auto w-fit max-w-[90%] sm:max-w-[85%]"
                   aria-label={
-                    turn.purpose === "source" ? "Ngữ liệu em bổ sung" : "Câu trả lời của em"
+                    turn.purpose === "clarification"
+                      ? "Chỗ em đang vướng"
+                      : turn.purpose === "source"
+                        ? "Ngữ liệu em bổ sung"
+                        : "Câu trả lời của em"
                   }
                 >
                   <p className="mb-1.5 text-right text-xs text-muted-foreground">
-                    {turn.purpose === "source" ? "Ngữ liệu em bổ sung" : "Câu trả lời của em"}
+                    {turn.purpose === "clarification"
+                      ? "Chỗ em đang vướng"
+                      : turn.purpose === "source"
+                        ? "Ngữ liệu em bổ sung"
+                        : "Câu trả lời của em"}
                   </p>
                   <div className="rounded-xl bg-primary-soft px-4 py-3">
                     <p className="whitespace-pre-wrap break-words text-sm leading-7">{turn.text}</p>

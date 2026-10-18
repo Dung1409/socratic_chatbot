@@ -12,7 +12,7 @@ export function getLearningHistory(session: Session) {
       question = { turn, index, answered: false };
       questions.push(question);
     }
-    if (turn.kind === "student" && turn.purpose !== "source") {
+    if (turn.kind === "student" && (!turn.purpose || turn.purpose === "answer")) {
       answers.push({ turn, index });
       if (question) question.answered = true;
     }

@@ -9,7 +9,7 @@ const question = (text: string, level = 2): Turn => ({
   level,
   response_kind: "question",
 });
-const answer = (text: string, purpose: "source" | "answer" = "answer"): Turn => ({
+const answer = (text: string, purpose: "source" | "answer" | "clarification" = "answer"): Turn => ({
   kind: "student",
   text,
   purpose,
@@ -21,6 +21,13 @@ const answer = (text: string, purpose: "source" | "answer" = "answer"): Turn => 
 const session = (turns: Turn[]) => ({ turns }) as Session;
 
 describe("learning history presentation", () => {
+  it("does not count choosing a difficulty as an answer or mark the question answered", () => {
+    const history = getLearningHistory(
+      session([question("Đọc sách có vai trò gì?"), answer("Em chưa nghĩ ra ý.", "clarification")]),
+    );
+    expect(history.answers).toHaveLength(0);
+    expect(history.questions[0]?.answered).toBe(false);
+  });
   it("keeps server order, includes support between question and answer, and leaves the next question unanswered", () => {
     const saved = session([
       question("Vì sao em nghĩ như vậy?", 5),

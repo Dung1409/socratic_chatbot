@@ -18,12 +18,13 @@ from .auth import AuthService, Principal, UNSAFE_METHODS, auth_router
 from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, extract_image_batch, extract_image_archive, validate_upload
 from .structure import structure_text, question_context
 from .jobs import JobQueue
-from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput,
+from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput, HintInput, MessageInput, SubmissionInput,
                       MultiAssignmentInput, SessionTurnInput, SessionItemStatusInput, SessionSelectItemInput,
                       DocumentReviewInput, TextDocumentInput, QuickTaskInput)
 from .tutor import BLOOM_NAMES, lesson_steps, tutor_turn
 from .ai_tutor import OpenAITutor
 from .adaptive import AdaptiveSessions, public_pending
+from .support import support_context
 from . import config
 from .proxy import PublicOriginMiddleware
 
@@ -47,6 +48,7 @@ def public_session(session):
             if key not in {"requests", "rubric", "review", "student_id", "student_name", "class_name"}}
     if session.get("tutor_mode") == "openai":
         result["pending_action"] = public_pending(session.get("pending_action"))
+        result["support_state"] = support_context(session)
     return result
 
 
@@ -671,7 +673,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             raise HTTPException(409, "Thao tác này chỉ áp dụng cho phiên AI thích ứng.")
         with db.connect(write=True) as conn:
             session = require(conn, "sessions", session_id, owner_id)
-            fingerprint = hashlib.sha256(json.dumps({"action": action, **body.model_dump()}, sort_keys=True).encode()).hexdigest()
+            fingerprint = hashlib.sha256(json.dumps({"action": action, **body.model_dump(exclude_none=True)}, sort_keys=True).encode()).hexdigest()
             previous = session["requests"].get(body.client_message_id)
             if previous:
                 if previous != fingerprint:
@@ -713,7 +715,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         return mutate(session_id, body, "message", user.id)
 
     @app.post("/api/sessions/{session_id}/hints", tags=["Sessions"])
-    def hint(session_id: str, body: ActionInput, user: Principal = Depends(auth.current_user)):
+    def hint(session_id: str, body: HintInput, user: Principal = Depends(auth.current_user)):
         return mutate(session_id, body, "hint", user.id)
 
     @app.post("/api/sessions/{session_id}/submit", tags=["Sessions"])
@@ -736,7 +738,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def dashboard(user: Principal = Depends(auth.current_user)):
         with db.connect() as conn:
             saved = saved_sessions(conn, user.id)
-            answers = [t for s in saved for t in s["turns"] if t["kind"] == "student" and t.get("purpose") != "source"]
+            answers = [t for s in saved for t in s["turns"] if t["kind"] == "student" and t.get("purpose", "answer") == "answer"]
             hints = sum(t["kind"] == "hint" for s in saved for t in s["turns"])
             return {"sessions": len(saved), "answers": len(answers), "hints": hints,
                     "hints_per_answer": round(hints / len(answers), 1) if answers else 0,
@@ -791,7 +793,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                                           "session_id": assignment_sessions[0]["id"] if assignment_sessions else None}]})
             groups.sort(key=lambda group: group["created_at"], reverse=True)
             return {
-                "bloom_profile": [{"skill": name, "value": sum(t["kind"] == "student" and t.get("purpose") != "source" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)],
+                "bloom_profile": [{"skill": name, "value": sum(t["kind"] == "student" and t.get("purpose", "answer") == "answer" and t["level"] == i + 1 for s in saved for t in s["turns"])} for i, name in enumerate(BLOOM_NAMES)],
                 "sessions": [public_session(s) for s in saved],
                 "assignments": groups,
             }

@@ -24,6 +24,7 @@ export type AssignmentItem = {
   item_type?: "reading" | "social" | "literary" | "other";
 };
 export type Step = { level: number; q: string; hints: string[] };
+export type HintDifficulty = "understanding" | "ideas" | "expression";
 export type Turn = (
   | { kind: "tutor"; step: number; text: string; level: number }
   | { kind: "hint"; step: number; tier: number; text: string }
@@ -37,7 +38,7 @@ export type Turn = (
     }
 ) & {
   id?: string;
-  purpose?: "source" | "answer";
+  purpose?: "source" | "answer" | "clarification";
   response_kind?: "question" | "support" | "source_request" | "ready";
   objective?: string;
   strategy?: string;
@@ -81,6 +82,14 @@ export type Session = {
   submitted_at?: string;
   tutor_mode: string;
   current_objective?: string;
+  support_state?: {
+    question_id: string | null;
+    question_text: string;
+    objective: string;
+    consecutive_hints: number;
+    needs_check_in: boolean;
+    difficulty: HintDifficulty | null;
+  };
   plan?: { summary: string; objectives: string[]; task_type: "reading" | "social" | "literary" };
   support_events?: {
     id: string;
@@ -95,6 +104,7 @@ export type Session = {
     text: string;
     client_message_id: string;
     status: "processing" | "failed";
+    difficulty?: HintDifficulty | null;
   } | null;
 };
 export type Dashboard = {
@@ -489,10 +499,11 @@ export const api = {
       expected_version: session.version,
       client_message_id: key,
     }),
-  hint: (session: Session, key: string) =>
+  hint: (session: Session, key: string, difficulty?: HintDifficulty) =>
     post<Session>(`/sessions/${session.id}/hints`, {
       expected_version: session.version,
       client_message_id: key,
+      ...(difficulty ? { difficulty } : {}),
     }),
   submit: (session: Session, essay: string, key: string) =>
     post<Session>(`/sessions/${session.id}/submit`, {

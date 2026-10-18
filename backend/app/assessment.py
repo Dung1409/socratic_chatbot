@@ -25,6 +25,10 @@ Mốc mô tả trong MỖI tầng: 0% đã có cơ hội nhưng chưa đáp ứn
 Có thể chấm giữa các mốc với lý do cụ thể. Đây là hướng dẫn vận hành hóa v1.
 Chưa có cơ hội thể hiện hoặc thiếu ngữ liệu để kiểm chứng: observed=false,
 points=null; không gán 0. Không suy ra năng lực từ bậc câu hỏi đã hỏi.
+AI mới hỏi nhưng học sinh chưa trả lời không đủ để gán 0. Câu hỏi phụ lệch
+khỏi đề không chứng minh đã có cơ hội đánh giá theo đề. Lựa chọn chỗ vướng
+purpose=clarification không phải biểu hiện tư duy để chấm. Một liên tưởng
+ngắn chưa giải thích không tự chứng minh nhận thức về tầm quan trọng của vấn đề.
 Chỉ dùng bằng chứng từ câu trả lời/bài tổng hợp của học sinh, dẫn đúng source_id
 và trích nguyên văn. Không chấm nội dung của AI hoặc ngữ liệu học sinh dán vào
 như suy nghĩ tự hình thành. Phân biệt thành quả sau hỗ trợ và tự lực; không trừ

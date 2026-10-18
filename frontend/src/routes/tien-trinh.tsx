@@ -72,17 +72,19 @@ function Page() {
         title="Thống kê học tập"
         desc="Theo dõi hoạt động tổng hợp; đề bài và kết quả chi tiết nằm trong từng bài học."
         action={
-          <select
-            aria-label="Khoảng thời gian thống kê"
-            className="assignment-select sm:w-48"
-            value={period}
-            onChange={(event) => setPeriod(event.target.value)}
-          >
-            <option value="7">7 ngày gần đây</option>
-            <option value="30">30 ngày gần đây</option>
-            <option value="90">90 ngày gần đây</option>
-            <option value="all">Toàn bộ thời gian</option>
-          </select>
+          <div className="w-full shrink-0 md:w-56">
+            <select
+              aria-label="Khoảng thời gian thống kê"
+              className="assignment-select"
+              value={period}
+              onChange={(event) => setPeriod(event.target.value)}
+            >
+              <option value="7">7 ngày gần đây</option>
+              <option value="30">30 ngày gần đây</option>
+              <option value="90">90 ngày gần đây</option>
+              <option value="all">Toàn bộ thời gian</option>
+            </select>
+          </div>
         }
       />
       <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6 lg:p-10">

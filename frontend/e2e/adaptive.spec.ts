@@ -85,6 +85,22 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
     true,
   );
   await page.screenshot({ path: "../artifacts/adaptive-report-mobile.png", fullPage: true });
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Đã nộp \(/ }).click();
+  await expect(
+    page.getByRole("list", { name: "Danh sách bài học" }).getByRole("listitem"),
+  ).toHaveCount(1);
+  await expect(page.getByText("Đã nộp 1/1 câu", { exact: false })).toBeVisible();
+  await page.goto("/tien-trinh");
+  await expect(page.getByRole("heading", { name: "Thống kê học tập", exact: true })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Danh sách bài học" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Báo cáo tư duy cuối phiên" })).toHaveCount(0);
+  await expect(
+    page.getByRole("img", { name: /Đang đối thoại: 0; Đang tổng hợp: 0; Đã nộp: 1/ }),
+  ).toBeVisible();
+  await page.getByLabel("Khoảng thời gian thống kê").selectOption("all");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({ path: "../artifacts/ui-statistics-data-desktop.png", fullPage: true });
   expect(errors).toEqual([]);
 });
 

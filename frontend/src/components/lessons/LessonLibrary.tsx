@@ -164,9 +164,11 @@ export function LessonLibrary({
                           {assignment.title}
                         </Link>
                       </h2>
-                      <p className="mt-2 line-clamp-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
-                        {assignment.prompt}
-                      </p>
+                      {assignment.prompt?.trim() !== assignment.title.trim() && (
+                        <p className="mt-2 line-clamp-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                          {assignment.prompt}
+                        </p>
+                      )}
                       <p className="mt-2 text-xs text-muted-foreground">
                         Đã nộp {submitted}/{total} câu
                         {resume?.done && !resume.submitted ? " · Đang tổng hợp bài làm" : ""}

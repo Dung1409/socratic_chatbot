@@ -52,6 +52,121 @@ it("shows a visible action for uploading images on the student assignment page",
   expect(screen.getByRole("button", { name: "Chọn PDF/Word/TXT" })).toBeVisible();
 });
 
+it("shows extracted question images while reviewing a newly uploaded exam", async () => {
+  vi.spyOn(authApi, "session").mockResolvedValue({
+    user: { id: "student-1", email: "student@example.com", display_name: "Student" },
+    csrf_token: "test-csrf",
+  });
+  vi.spyOn(api, "assignments").mockResolvedValue([]);
+  vi.spyOn(api, "extract").mockResolvedValue({
+    document_id: "math-exam",
+    filename: "de-toan.pdf",
+    title: "Đề Toán kiểm tra",
+    text: "Câu 1. Tính giá trị của biểu thức đã cho.",
+    subject: "Toán",
+    pages: [{
+      number: 1,
+      label: "Trang 1",
+      text: "",
+      method: "image",
+      confidence: null,
+      visual_sources: [{ source_id: "page-1", source: "pdf_page" }],
+    }],
+    structure: {
+      global_context: "",
+      global_paragraphs: [],
+      excluded: [],
+      warnings: [],
+      visuals: [{
+        id: "page-1-question-1",
+        page: 1,
+        source_id: "page-1",
+        source: "pdf_page",
+        kind: "question",
+        bbox: [0, 0, 1000, 500],
+        orientation: "horizontal",
+        description: "Ảnh câu 1",
+        uncertain: false,
+        link_status: "proposed",
+      }],
+      parts: [{
+        id: "part-1",
+        title: "Đề Toán",
+        context: "",
+        source_pages: [1],
+        paragraphs: [],
+        questions: [{
+          id: "question-1",
+          label: "Câu 1",
+          text: "Tính giá trị của biểu thức đã cho.",
+          stem: "Tính giá trị của biểu thức đã cho.",
+          context: "Tính giá trị của biểu thức đã cho.",
+          subquestions: [],
+          ideas: [],
+          source_pages: [1],
+          paragraphs: [],
+          visual_refs: ["page-1-question-1"],
+        }],
+      }, {
+        id: "part-2",
+        title: "Phần II",
+        context: "",
+        source_pages: [1],
+        paragraphs: [],
+        questions: [{
+          id: "question-2",
+          label: "Câu 2",
+          text: "Tìm nghiệm của phương trình.",
+          stem: "Tìm nghiệm của phương trình.",
+          context: "Tìm nghiệm của phương trình.",
+          subquestions: [],
+          ideas: [],
+          source_pages: [1],
+          paragraphs: [],
+        }],
+      }],
+    },
+  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = createRouter({
+    routeTree,
+    history: createMemoryHistory({ initialEntries: ["/de-bai"] }),
+    context: { queryClient },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+
+  fireEvent.keyDown(await screen.findByRole("tab", { name: "Tải tài liệu" }), { key: "Enter" });
+  fireEvent.change(screen.getByLabelText("Chọn tệp PDF, Word hoặc văn bản"), {
+    target: { files: [new File(["pdf"], "de-toan.pdf", { type: "application/pdf" })] },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Đã kiểm tra, chọn câu" }));
+  const collapsedPart = screen.getByRole("button", { name: "Mở phần Phần II" });
+  expect(collapsedPart).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(collapsedPart);
+  expect(screen.getByRole("button", { name: "Thu gọn phần Phần II" })).toHaveAttribute(
+    "aria-expanded", "true",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Thu gọn phần Phần II" }));
+  expect(await screen.findByRole("img", { name: "Ảnh câu 1" })).toHaveAttribute(
+    "src",
+    "/api/documents/math-exam/visuals/page-1-question-1/image",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Quay lại kiểm tra nội dung" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Xem và sửa bản tách" }));
+  expect(screen.getByRole("button", { name: "Mở phần Phần II" })).toHaveAttribute(
+    "aria-expanded", "false",
+  );
+
+  expect(await screen.findByRole("img", { name: "Ảnh câu 1" })).toHaveAttribute(
+    "src",
+    "/api/documents/math-exam/visuals/page-1-question-1/image",
+  );
+});
+
 it("displays a numbered prose paragraph without OCR hard line breaks", async () => {
   vi.spyOn(authApi, "session").mockResolvedValue({
     user: { id: "student-1", email: "student@example.com", display_name: "Student" },

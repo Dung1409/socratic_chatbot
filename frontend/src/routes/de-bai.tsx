@@ -150,6 +150,8 @@ function DocumentWorkspace({
   const [detailSelection, setDetailSelection] = useState<string>("");
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailEditable, setDetailEditable] = useState(false);
+  const [expandedPartIds, setExpandedPartIds] = useState<string[]>([]);
+  const [expandedDetailPartIds, setExpandedDetailPartIds] = useState<string[]>([]);
   const [questionsOpen, setQuestionsOpen] = useState(true);
   const [questionListOpen, setQuestionListOpen] = useState(true);
   const [step, setStep] = useState(initial.structure ? 2 : 1);
@@ -226,6 +228,7 @@ function DocumentWorkspace({
     setQuestionListOpen(true);
     const firstPart = parsed.parts.find((part) => part.questions.length);
     const firstQuestion = firstPart?.questions[0];
+    setExpandedPartIds(firstPart ? [firstPart.id] : []);
     setSelectedId(firstQuestion?.id ?? "");
     const questions = parsed.parts.flatMap((part) => part.questions);
     setSelectedIds(questions.length === 1 && firstQuestion ? [firstQuestion.id] : []);
@@ -512,6 +515,12 @@ function DocumentWorkspace({
     (question) =>
       question.id === selectedId || question.ideas.some((idea) => idea.id === selectedId),
   );
+  const selectedVisuals = (structure?.visuals ?? []).filter(
+    (visual) =>
+      selectedQuestion &&
+      (selectedQuestion.visual_refs?.includes(visual.id) ||
+        selectedQuestion.visual_candidates?.includes(visual.id)),
+  );
   const sharedParagraphs = filterSourceParagraphs(selectedPart?.paragraphs ?? []);
   const sharedSourceLayout = classifyTextLayout(
     sharedParagraphs.map((paragraph) => paragraph.text).join("\n"),
@@ -604,6 +613,8 @@ function DocumentWorkspace({
       extraction_warnings: [...sourceWarnings, ...structure.warnings],
     });
     const firstQuestion = structure.parts.flatMap((part) => part.questions)[0];
+    const firstPart = structure.parts.find((part) => part.questions.length);
+    setExpandedDetailPartIds(firstPart ? [firstPart.id] : []);
     setDetailSelection(firstQuestion?.id ?? structure.parts[0]?.id ?? "");
     setDetailOpen(true);
   };
@@ -638,14 +649,12 @@ function DocumentWorkspace({
       part.questions.some((question) => question.id === detailSelection),
   );
   const detailQuestion = detailPart?.questions.find((question) => question.id === detailSelection);
-  const detailVisuals = !detailEditable
-    ? (detailStructure?.visuals ?? []).filter(
-        (visual) =>
-          detailQuestion &&
-          (detailQuestion.visual_refs?.includes(visual.id) ||
-            detailQuestion.visual_candidates?.includes(visual.id)),
-      )
-    : [];
+  const detailVisuals = (detailStructure?.visuals ?? []).filter(
+    (visual) =>
+      detailQuestion &&
+      (detailQuestion.visual_refs?.includes(visual.id) ||
+        detailQuestion.visual_candidates?.includes(visual.id)),
+  );
   const detailParagraphs = detailPart?.paragraphs.length
     ? detailPart.paragraphs
     : (detailStructure?.global_paragraphs ?? []);
@@ -1187,15 +1196,32 @@ function DocumentWorkspace({
                               hidden={!questionListOpen}
                               className="space-y-4"
                             >
-                              {structure.parts.map((part) => (
+                              {structure.parts.map((part, index) => (
                                 <div
                                   key={part.id}
                                   className="overflow-hidden rounded-xl border bg-background"
                                 >
-                                  <h3 className="border-b bg-muted/50 px-4 py-3 text-sm font-semibold">
-                                    {part.title}
+                                  <h3>
+                                    <button
+                                      type="button"
+                                      aria-expanded={expandedPartIds.includes(part.id)}
+                                      aria-controls={`question-part-${index}`}
+                                      aria-label={`${expandedPartIds.includes(part.id) ? "Thu gọn" : "Mở"} phần ${part.title}`}
+                                      onClick={() => setExpandedPartIds((current) =>
+                                        current.includes(part.id)
+                                          ? current.filter((id) => id !== part.id)
+                                          : [...current, part.id],
+                                      )}
+                                      className="flex min-h-11 w-full items-center justify-between gap-2 bg-muted/50 px-4 py-3 text-left text-sm font-semibold hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary"
+                                    >
+                                      <span className="min-w-0 truncate">{part.title}</span>
+                                      <span className="flex shrink-0 items-center gap-2 text-xs font-normal text-muted-foreground">
+                                        {part.questions.length} câu
+                                        <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${expandedPartIds.includes(part.id) ? "rotate-180" : ""}`} />
+                                      </span>
+                                    </button>
                                   </h3>
-                                  <div className="space-y-1 p-2">
+                                  <div id={`question-part-${index}`} hidden={!expandedPartIds.includes(part.id)} className="space-y-1 border-t p-2">
                                     {part.questions.map((question) => {
                                       const active = selectedQuestion?.id === question.id;
                                       return (
@@ -1285,6 +1311,33 @@ function DocumentWorkspace({
                                   Tài liệu này không có câu hỏi tường minh. Nội dung gốc được giữ
                                   nguyên bên dưới để em đọc và đặt câu hỏi học tập.
                                 </p>
+                              )}
+                              {documentId && selectedVisuals.length > 0 && (
+                                <section className="rounded-lg border p-4 sm:p-5" aria-label="Ảnh của câu hỏi">
+                                  <h4 className="text-xs font-bold uppercase tracking-wider text-foreground/70">
+                                    Ảnh đã tách cho câu này ({selectedVisuals.length})
+                                  </h4>
+                                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                    {selectedVisuals.map((visual) => {
+                                      const imageUrl = `/api/documents/${documentId}/visuals/${visual.id}/image`;
+                                      return (
+                                        <figure key={visual.id} className="rounded-lg border bg-muted/10 p-3">
+                                          <a href={imageUrl} target="_blank" rel="noreferrer">
+                                            <img
+                                              src={imageUrl}
+                                              alt={visual.description || `${selectedQuestion.label}, trang ${visual.page}`}
+                                              className="max-h-[420px] w-full rounded object-contain"
+                                              loading="lazy"
+                                            />
+                                          </a>
+                                          <figcaption className="mt-2 text-xs text-muted-foreground">
+                                            Trang {visual.page} · {visual.question_label || selectedQuestion.label}
+                                          </figcaption>
+                                        </figure>
+                                      );
+                                    })}
+                                  </div>
+                                </section>
                               )}
                               {selectedIdea && (
                                 <section
@@ -1521,12 +1574,24 @@ function DocumentWorkspace({
                   Cấu trúc tài liệu
                 </p>
                 <div className="space-y-4">
-                  {detailStructure?.parts.map((part) => (
+                  {detailStructure?.parts.map((part, index) => (
                     <div key={part.id}>
-                      <p className="mb-1 px-2 text-xs font-semibold text-foreground">
-                        {part.title}
-                      </p>
-                      <div className="space-y-1">
+                      <button
+                        type="button"
+                        aria-expanded={expandedDetailPartIds.includes(part.id)}
+                        aria-controls={`detail-part-${index}`}
+                        aria-label={`${expandedDetailPartIds.includes(part.id) ? "Thu gọn" : "Mở"} phần ${part.title}`}
+                        onClick={() => setExpandedDetailPartIds((current) =>
+                          current.includes(part.id)
+                            ? current.filter((id) => id !== part.id)
+                            : [...current, part.id],
+                        )}
+                        className="mb-1 flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-xs font-semibold text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary"
+                      >
+                        <span className="min-w-0 truncate">{part.title}</span>
+                        <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 transition-transform ${expandedDetailPartIds.includes(part.id) ? "rotate-180" : ""}`} />
+                      </button>
+                      <div id={`detail-part-${index}`} hidden={!expandedDetailPartIds.includes(part.id)} className="space-y-1">
                         {filterSourceParagraphs(part.paragraphs).length > 0 && (
                           <button
                             type="button"

@@ -111,7 +111,7 @@ test("text file keeps shared material after editing and reopens the reviewed ver
   const request = page.waitForRequest(
     (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
   );
-  await page.getByRole("button", { name: "Bắt đầu học" }).click();
+  await page.getByRole("button", { name: "Bắt đầu" }).click();
   const context = (await request).postDataJSON().items[0].context;
   expect(context).toContain("Đọc sách giúp chúng ta hiểu nhiều góc nhìn khác nhau.");
   expect(context).not.toContain("Không gửi lời giải này");
@@ -138,13 +138,13 @@ test("reordering images invalidates the previous extraction and requires reading
     { name: "first.png", mimeType: "image/png", buffer: png },
     { name: "second.png", mimeType: "image/png", buffer: png },
   ]);
-  await expect(page.getByRole("button", { name: /^Bắt đầu học/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Bắt đầu/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Xác nhận thứ tự & đọc chữ" }).click();
-  await expect(page.getByRole("button", { name: "Bắt đầu học" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Bắt đầu" })).toBeEnabled();
   await page.getByText("Kiểm tra thứ tự trang · 2 ảnh", { exact: true }).click();
   await page.getByRole("button", { name: "Đưa ảnh 2 lên" }).click();
   await expect(page.getByRole("textbox", { name: "Văn bản đọc từ tài liệu" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Bắt đầu học/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Bắt đầu/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Xác nhận thứ tự & đọc chữ" }).click();
   await expect(
     page.getByText("Yêu cầu từ thứ tự ảnh đã thay đổi.", { exact: true }).first(),
@@ -204,7 +204,7 @@ test("a reference document can become a specific task while keeping its material
   const request = page.waitForRequest(
     (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
   );
-  await page.getByRole("button", { name: "Bắt đầu học", exact: true }).click();
+  await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
   const item = (await request).postDataJSON().items[0];
   expect(item.prompt).toBe(prompt);
   expect(item.context).toContain(materials);
@@ -233,7 +233,7 @@ test("pending image document can be recovered after a page reload", async ({ pag
   await page.reload();
   ready = true;
   await page.getByRole("button", { name: "Kiểm tra tài liệu đang xử lý" }).click();
-  await expect(page.getByRole("button", { name: "Bắt đầu học" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Bắt đầu" })).toBeEnabled();
   await expect(
     page.getByText("Hãy phân tích vấn đề được nêu trong ảnh.", { exact: true }).first(),
   ).toBeVisible();

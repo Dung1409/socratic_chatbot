@@ -13,6 +13,7 @@ export type Assignment = {
   progress: number;
   task_type?: "reading" | "social" | "literary" | "other";
   source_text?: string;
+  visual_refs?: string[];
   items?: AssignmentItem[];
   active_item_id?: string;
 };
@@ -278,7 +279,26 @@ export type SourcePage = {
   text: string;
   method: string;
   confidence: number | null;
+  image_source?: "image_page" | "pdf_page" | null;
   tags?: SourceTag[];
+  visual_sources?: { source_id: string; source: string; media_path?: string }[];
+  visuals?: VisualRegion[];
+};
+export type VisualRegion = {
+  id: string;
+  page: number;
+  source_id: string;
+  source: string;
+  kind: string;
+  bbox: [number, number, number, number];
+  orientation: "horizontal" | "vertical" | "unknown";
+  question_label?: string | null;
+  section?: string | null;
+  description: string;
+  uncertain: boolean;
+  link_status: "proposed" | "unreviewed" | "confirmed";
+  candidate_question_ids?: string[];
+  question_ids?: string[];
 };
 export type SourceParagraph = { id: string; text: string; source_pages: number[] };
 export type ParsedIdea = {
@@ -301,9 +321,16 @@ export type ParsedQuestion = {
   subquestions: string[];
   ideas: ParsedIdea[];
   source_pages: number[];
+  subject_hint?: string | null;
   paragraphs: SourceParagraph[];
   source_only?: boolean;
   footnotes?: { number: string | number; text: string }[];
+  question_type?: "multiple_choice" | "true_false" | "short_answer" | "essay" | "open_response";
+  answer_format?: string;
+  options?: { label: string; text: string; source_pages: number[] }[];
+  statements?: { label: string; text: string; source_pages: number[] }[];
+  visual_refs?: string[];
+  visual_candidates?: string[];
 };
 export type ParsedPart = {
   id: string;
@@ -317,6 +344,7 @@ export type DocumentStructure = {
   global_context: string;
   global_paragraphs: SourceParagraph[];
   parts: ParsedPart[];
+  visuals?: VisualRegion[];
   excluded: { text: string; page: number | null; reason: string }[];
   warnings: string[];
 };

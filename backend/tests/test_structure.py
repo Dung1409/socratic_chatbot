@@ -1,6 +1,30 @@
 from backend.app.structure import question_context, structure_text
 
 
+def test_mixed_exam_preserves_question_formats_and_inline_choices():
+    text = """PHẦN I. CÂU TRẮC NGHIỆM NHIỀU PHƯƠNG ÁN LỰA CHỌN
+Câu 1. Đồ thị nào biểu diễn chuyển động đều? A. Hình 1 B. Hình 2 C. Hình 3 D. Hình 4
+PHẦN II. CÂU TRẮC NGHIỆM ĐÚNG SAI
+Câu 1. Quan sát hình bên và xác định đúng hay sai.
+a) Vật chuyển động theo chiều dương.
+b) Gia tốc của vật bằng không.
+PHẦN III. CÂU TRẢ LỜI NGẮN
+Câu 1. Tính vận tốc của vật.
+PHẦN IV. TỰ LUẬN
+Câu 1. Giải thích kết quả thí nghiệm."""
+    parts = structure_text(text)["parts"]
+    assert [part["questions"][0]["question_type"] for part in parts] == [
+        "multiple_choice", "true_false", "short_answer", "essay",
+    ]
+    assert [option["label"] for option in parts[0]["questions"][0]["options"]] == ["A", "B", "C", "D"]
+    assert "A. Hình 1" not in parts[0]["questions"][0]["task"]
+    assert "A. Hình 1" in parts[0]["questions"][0]["context"]
+    assert [item["label"] for item in parts[1]["questions"][0]["statements"]] == ["a", "b"]
+    assert "a) Vật" not in parts[1]["questions"][0]["task"]
+    assert "a) Vật" in parts[1]["questions"][0]["context"]
+    assert parts[1]["questions"][0]["answer_format"] == "true_false_per_statement"
+
+
 def test_single_task_keeps_the_request_without_a_question_number():
     text = "Hãy phân tích vai trò của dẫn chứng trong bài nghị luận."
     result = structure_text(text, mode="single")

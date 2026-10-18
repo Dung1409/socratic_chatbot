@@ -11,7 +11,7 @@ export const Route = createFileRoute("/")({
   head: () =>
     seo(
       "Tổng quan tự học",
-      "Tải đề riêng, luyện tập Socratic và theo dõi tiến trình tự học Ngữ văn.",
+      "Tải đề riêng, học cùng trợ lý AI và theo dõi tiến trình tự học Ngữ văn.",
     ),
   component: Index,
 });
@@ -65,8 +65,7 @@ function Index() {
                 <h2 className="text-lg font-semibold">{current.title}</h2>
                 <p className="text-sm text-foreground/80 whitespace-pre-wrap">{current.prompt}</p>
                 <p className="text-xs text-secondary">
-                  {current.task_type === "reading" ? "Đọc hiểu" : "Nghị luận xã hội"} · Socratic ×
-                  Bloom
+                  {current.task_type === "reading" ? "Đọc hiểu" : "Nghị luận xã hội"} · Học cùng AI
                 </p>
                 {stats.latest_session?.assessment && (
                   <p className="text-sm font-medium">

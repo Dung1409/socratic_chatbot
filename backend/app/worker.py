@@ -23,6 +23,13 @@ def extract_isolated(filename, data):
         [sys.executable, "-m", "backend.app.extraction", Path(filename).suffix.lower()],
         input=data, capture_output=True, timeout=config.positive_integer("WORKER_JOB_TIMEOUT_SECONDS", 300),
     )
+    if result.stderr:
+        # The isolated parser writes timing/provider diagnostics to stderr.
+        # Keep only the last lines so API keys or document content are never logged.
+        diagnostics = result.stderr.decode("utf-8", errors="replace").splitlines()
+        for line in diagnostics[-40:]:
+            if "key" not in line.lower() and "authorization" not in line.lower():
+                logger.info("parser %s", line[:500])
     if result.returncode:
         raise RuntimeError("Parser process failed")
     payload = json.loads(result.stdout)

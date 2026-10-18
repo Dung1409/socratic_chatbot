@@ -56,7 +56,11 @@ class SourcePageInput(Input):
     text: str = Field(max_length=150000)
     method: str = Field(default="text", max_length=20)
     confidence: float | None = Field(default=None, ge=0, le=100)
+    image_source: str | None = Field(default=None, max_length=20)
+    subject_hint: str | None = Field(default=None, max_length=100)
     tags: list[dict] | None = Field(default=None, max_length=200)
+    visual_sources: list[dict] = Field(default_factory=list, max_length=100)
+    visuals: list[dict] = Field(default_factory=list, max_length=100)
 
 
 class StructureInput(Input):
@@ -91,8 +95,15 @@ class ReviewQuestion(BaseModel):
     stem: str = Field(default="", max_length=150000)
     paragraphs: list[ReviewParagraph] = Field(default_factory=list, max_length=15000)
     source_pages: list[int] = Field(default_factory=list, max_length=30)
+    subject_hint: str | None = Field(default=None, max_length=100)
     ideas: list[dict] = Field(default_factory=list, max_length=100)
     subquestions: list[str] = Field(default_factory=list, max_length=100)
+    question_type: Literal["multiple_choice", "true_false", "short_answer", "essay", "open_response"] = "open_response"
+    answer_format: str = Field(default="text", max_length=50)
+    options: list[dict] = Field(default_factory=list, max_length=20)
+    statements: list[dict] = Field(default_factory=list, max_length=50)
+    visual_refs: list[str] = Field(default_factory=list, max_length=100)
+    visual_candidates: list[str] = Field(default_factory=list, max_length=100)
 
 
 class ReviewPart(BaseModel):
@@ -110,13 +121,14 @@ class ReviewStructure(BaseModel):
     parts: list[ReviewPart] = Field(min_length=1, max_length=100)
     global_context: str = Field(default="", max_length=150000)
     global_paragraphs: list[ReviewParagraph] = Field(default_factory=list, max_length=15000)
+    visuals: list[dict] = Field(default_factory=list, max_length=3000)
     warnings: list[str] = Field(default_factory=list, max_length=1000)
     excluded: list[dict] = Field(default_factory=list, max_length=15000)
 
 
 class DocumentReviewInput(Input):
     title: str = Field(min_length=5, max_length=300)
-    text: str = Field(min_length=15, max_length=150000)
+    text: str = Field(default="", max_length=150000)
     structure: ReviewStructure
     selected_ids: list[str] = Field(default_factory=list, max_length=100)
     mode: Literal["auto", "single", "reference"] = "auto"
@@ -126,6 +138,10 @@ class DocumentReviewInput(Input):
         ids = [q.id for part in self.structure.parts for q in part.questions]
         if len(ids) > 5000 or len(ids) != len(set(ids)) or not set(self.selected_ids).issubset(ids):
             raise ValueError("Bản tách không hợp lệ; tài liệu tối đa 5.000 câu và mỗi phiên chọn tối đa 100 câu")
+        if not self.text.strip() and not any(
+                isinstance(visual, dict) and visual.get("kind") == "question"
+                for visual in self.structure.visuals):
+            raise ValueError("Cần có nội dung chữ hoặc câu hỏi được khoanh từ ảnh")
         import json
         if len(json.dumps(self.structure.model_dump(), ensure_ascii=False)) > 32_000_000:
             raise ValueError("Bản tách quá lớn; hãy chia tài liệu thành các phần nhỏ hơn")

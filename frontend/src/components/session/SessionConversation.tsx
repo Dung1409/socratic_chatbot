@@ -3,6 +3,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { BLOOM } from "@/lib/data";
 import { type Session } from "@/lib/api";
 import { APP_NAME } from "@/lib/brand";
+import { TutorMessage } from "@/components/session/TutorMessage";
 
 const hintNames = ["Định hướng", "Câu hỏi phụ", "Khung trả lời"];
 const strategies: Record<string, string> = {
@@ -114,16 +115,15 @@ export function SessionConversation({ session }: { session: Session }) {
                           <LearningBloomBadge level={turn.level} />
                         )}
                     </div>
-                    <p
+                    <TutorMessage
+                      text={turn.text}
                       className={
                         hint
                           ? "whitespace-pre-wrap break-words text-sm leading-7"
                           : "whitespace-pre-wrap break-words text-base leading-7"
                       }
-                    >
-                      {turn.text}
-                    </p>
-                    {(reason || turn.objective || turn.strategy || source) && (
+                    />
+                    {(reason || (!hint && (turn.objective || turn.strategy)) || source) && (
                       <details className="mt-2 text-xs leading-6 text-muted-foreground">
                         <summary className="w-fit cursor-pointer font-medium">
                           {hint ? "Chi tiết gợi ý" : "Về lượt trao đổi này"}
@@ -145,8 +145,8 @@ export function SessionConversation({ session }: { session: Session }) {
                             gợi ý.
                           </p>
                         )}
-                        {turn.objective && <p>Mục tiêu: {turn.objective}</p>}
-                        {turn.strategy && strategies[turn.strategy] && (
+                        {!hint && turn.objective && <p>Mục tiêu: {turn.objective}</p>}
+                        {!hint && turn.strategy && strategies[turn.strategy] && (
                           <p>Cách đặt câu hỏi: {strategies[turn.strategy]}</p>
                         )}
                       </details>

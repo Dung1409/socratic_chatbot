@@ -1,17 +1,19 @@
 """Read student documents into ordered, reviewable source units.
 
-When configured, Gemini reads image pages and normalizes extracted text.
+When configured, the document AI provider reads image pages and normalizes text.
 Tesseract remains the local fallback. The original upload is retained by the
 job queue; only the configured external provider receives document content.
 """
 
 import io
+import logging
 import os
 import re
 import subprocess
 import tempfile
 import unicodedata
 import zipfile
+from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -22,6 +24,7 @@ MAX_IMAGE_PIXELS = 20_000_000
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 WORD_SUFFIXES = {".doc", ".docx"}
 TEXT_DOCUMENT_SUFFIXES = {".txt", ".md", ".csv", ".rtf", ".html", ".htm"}
+logger = logging.getLogger(__name__)
 
 
 class ExtractionError(ValueError):
@@ -81,8 +84,8 @@ def _prepare_ocr_image(image):
     from PIL import ImageEnhance, ImageFilter, ImageOps
 
     prepared = ImageOps.grayscale(image)
-    if prepared.width < 2200:
-        scale = min(2.0, 2200 / max(prepared.width, 1))
+    if prepared.width < 1800:
+        scale = min(1.6, 1800 / max(prepared.width, 1))
         prepared = prepared.resize((round(prepared.width * scale), round(prepared.height * scale)))
     prepared = prepared.filter(ImageFilter.MedianFilter(size=3))
     prepared = ImageOps.autocontrast(prepared, cutoff=1)
@@ -120,10 +123,13 @@ def _ocr_image(image) -> tuple[str, float | None]:
                 values.append(score)
         return sum(values) / len(values) if values else 0
 
-    # Retry uncertain pages with a different layout model and keep the pass
-    # with stronger word-level confidence. This avoids proofreading every page.
+    # A second layout pass and per-word proofreading are expensive on scanned
+    # PDFs. Keep the default bounded so one bad page cannot hold the worker for
+    # minutes; opt into the slower proofreading pass explicitly when auditing
+    # a difficult scan.
+    detailed = os.getenv("OCR_DETAILED_VERIFY", "0").strip().lower() in {"1", "true", "yes"}
     first_score = mean_confidence(words)
-    if first_score < 88:
+    if detailed and first_score < 88:
         try:
             alternate = pytesseract.image_to_data(
                 prepared, lang="vie", config="--psm 6", output_type=Output.DICT, timeout=35,
@@ -148,6 +154,8 @@ def _ocr_image(image) -> tuple[str, float | None]:
 
     def verified_number(index: int, value: str, confidence: float) -> str:
         """Check uncertain numerals on their own pixels with digit-only OCR."""
+        if not detailed:
+            return value
         numeric = re.fullmatch(r"(\d{1,6})([.,):%]*)", value)
         after_question_label = bool(line_words and plain(line_words[-1]).rstrip(".") in {"CAU", "BAI"})
         ambiguous_label_number = (after_question_label and bool(re.fullmatch(r"\D{1,3}[.):]", value)))
@@ -176,6 +184,8 @@ def _ocr_image(image) -> tuple[str, float | None]:
 
     def verified_word(index: int, value: str, confidence: float) -> str:
         """Recheck low-confidence Vietnamese words without guessing from context."""
+        if not detailed:
+            return value
         if confidence >= 70 or not re.fullmatch(r"[^\W\d_]{2,20}[.!?,;:]?", value, re.UNICODE):
             return value
         left, top = words["left"][index], words["top"][index]
@@ -201,7 +211,7 @@ def _ocr_image(image) -> tuple[str, float | None]:
             value = " ".join(line_words)
             # Short all-caps headings are especially prone to missed Vietnamese
             # accents. Retry only their own crop, never replace unrelated lines.
-            if (value.isupper() and 2 <= len(line_words) <= 12 and len(value) <= 80
+            if (detailed and value.isupper() and 2 <= len(line_words) <= 12 and len(value) <= 80
                     and not any(char.isdigit() for char in value)):
                 left = min(words["left"][i] for i in line_indexes)
                 top = min(words["top"][i] for i in line_indexes)
@@ -245,12 +255,20 @@ def _ocr_image(image) -> tuple[str, float | None]:
 
 
 def _jpeg_bytes(image) -> bytes:
+    # Keep model payloads bounded. The original upload remains untouched; this
+    # representation is only used for OCR/vision requests and previews.
+    image = image.convert("RGB")
+    max_dimension = 1800
+    if max(image.size) > max_dimension:
+        scale = max_dimension / max(image.size)
+        image = image.resize((round(image.width * scale), round(image.height * scale)))
     output = io.BytesIO()
-    image.convert("RGB").save(output, format="JPEG", quality=85, optimize=True)
+    image.save(output, format="JPEG", quality=72, optimize=True)
     return output.getvalue()
 
 
-def _pdf_pages(data: bytes, source_images: dict[int, bytes] | None = None):
+def _pdf_pages(data: bytes, source_images: dict[int, bytes] | None = None,
+               visual_sources: list[dict] | None = None, analyze_visuals: bool = False):
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
@@ -260,25 +278,42 @@ def _pdf_pages(data: bytes, source_images: dict[int, bytes] | None = None):
     pages = []
     try:
         for index, page in enumerate(reader.pages):
-            text = (page.extract_text() or "").strip()
+            # With a vision provider configured, classify and route PDF pages
+            # from their rendered images before extracting any page text.
+            text = "" if source_images is not None else (page.extract_text() or "").strip()
             method = "text"
             confidence = None
-            if len(text) < 15 and (not text or len(page.images) > 0):
+            needs_ocr = len(text) < 15 and (not text or len(page.images) > 0)
+            # Text-native PDFs should stay text-native. Rendering every page
+            # just because visual analysis is enabled makes a normal PDF look
+            # like an image upload and creates unnecessary vision requests.
+            # Render only scans, embedded-image pages, or very short text pages
+            # that may contain a diagram/formula without a text layer.
+            visual_candidate = analyze_visuals and (bool(page.images) or len(text) < 80)
+            classify_page = source_images is not None
+            if needs_ocr or visual_candidate or classify_page:
                 import pypdfium2 as pdfium
 
                 if rendered is None:
                     rendered = pdfium.PdfDocument(data)
-                image = rendered[index].render(scale=2).to_pil()
+                image = rendered[index].render(scale=1.5).to_pil()
                 if image.width * image.height > MAX_IMAGE_PIXELS:
                     raise ExtractionError(f"Trang {index + 1} quá lớn để OCR")
+            if visual_sources is not None and (needs_ocr or visual_candidate or classify_page):
+                visual_sources.append({"page": index + 1, "source_id": f"page-{index + 1}",
+                                       "source": "pdf_page",
+                                       "image": _jpeg_bytes(image)})
+            if classify_page:
+                source_images[index + 1] = _jpeg_bytes(image)
+            if needs_ocr:
                 if source_images is not None:
-                    source_images[index + 1] = _jpeg_bytes(image)
                     text, confidence = "", None
                 else:
                     text, confidence = _ocr_image(image)
                 method = "ocr"
             pages.append({"number": index + 1, "label": f"Trang {index + 1}", "text": text,
-                          "method": method, "confidence": confidence})
+                          "method": method, "confidence": confidence,
+                          **({"image_source": "pdf_page"} if classify_page else {})})
     finally:
         if rendered is not None:
             rendered.close()
@@ -300,6 +335,68 @@ def _docx_pages(data: bytes):
             blocks.append(block.text)
     return [{"number": 1, "label": "Tài liệu Word", "text": "\n\n".join(blocks).strip(),
              "method": "text", "confidence": None}]
+
+
+def _office_page_images(data: bytes, suffix: str):
+    """Render Office documents into ordered page images for layout analysis."""
+    from pypdf import PdfReader
+    import pypdfium2 as pdfium
+
+    office = os.getenv("LIBREOFFICE_BIN", "soffice")
+    with tempfile.TemporaryDirectory(prefix="socratic-pages-") as directory:
+        source = Path(directory) / f"input{suffix}"
+        source.write_bytes(data)
+        try:
+            completed = subprocess.run(
+                [office, "--headless", "--convert-to", "pdf", "--outdir", directory, str(source)],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise ExtractionError("LibreOffice is required to render this file for layout analysis.", 415) from exc
+        rendered_path = Path(directory) / "input.pdf"
+        if completed.returncode != 0 or not rendered_path.exists():
+            raise ExtractionError("Could not render the Office file for layout analysis.", 415)
+        reader = PdfReader(str(rendered_path))
+        if reader.is_encrypted or not 1 <= len(reader.pages) <= MAX_PDF_PAGES:
+            raise ExtractionError(f"Rendered document must contain 1 to {MAX_PDF_PAGES} pages.")
+        document = pdfium.PdfDocument(str(rendered_path))
+        page_images, page_records, sources = {}, [], []
+        try:
+            for index in range(len(document)):
+                image = document[index].render(scale=1.5).to_pil()
+                if image.width * image.height > MAX_IMAGE_PIXELS:
+                    raise ExtractionError(f"Rendered page {index + 1} is too large for layout analysis.")
+                number = index + 1
+                image_bytes = _jpeg_bytes(image)
+                page_images[number] = image_bytes
+                page_records.append({"number": number, "label": f"Page {number}",
+                                     "text": reader.pages[index].extract_text() or "",
+                                     "method": "text", "confidence": None,
+                                     "image_source": "office_page"})
+                sources.append({"page": number, "source_id": f"page-{number}",
+                                "source": "office_page", "image": image_bytes})
+        finally:
+            document.close()
+        return page_records, page_images, sources
+
+
+def _docx_visual_sources(data: bytes) -> list[dict]:
+    """Keep embedded media addressable even though DOCX has no stable page numbers."""
+    sources = []
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for entry in archive.infolist():
+            if not entry.filename.startswith("word/media/") or entry.is_dir():
+                continue
+            if entry.file_size > MAX_FILE_BYTES or len(sources) >= 30:
+                continue
+            try:
+                image = _image(archive.read(entry))
+            except ExtractionError:
+                continue
+            sources.append({"page": 1, "source_id": f"media-{len(sources) + 1}",
+                            "source": "docx_media", "media_path": entry.filename,
+                            "image": _jpeg_bytes(image)})
+    return sources
 
 
 def _doc_pages(data: bytes):
@@ -425,6 +522,15 @@ def detect_subject(text: str, filename: str = "") -> str:
     return "chưa xác định"
 
 
+def subject_from_pages(pages: list[dict], text: str, filename: str = "") -> str:
+    """Prefer consistent model hints, retaining deterministic detection as fallback."""
+    subjects = [page["subject_hint"].strip() for page in pages
+                if isinstance(page.get("subject_hint"), str) and page["subject_hint"].strip()]
+    counts = Counter(subjects).most_common(2)
+    return counts[0][0] if counts and (len(counts) == 1 or counts[0][1] > counts[1][1]) \
+        else detect_subject(text, filename)
+
+
 def _content_blocks(pages: list[dict]) -> list[dict]:
     """Create small, provenance-aware blocks for non-exam documents too."""
     blocks = []
@@ -459,33 +565,166 @@ def _content_blocks(pages: list[dict]) -> list[dict]:
 
 
 def _finalize_pages(filename: str, pages: list[dict], source_images: dict[int, bytes] | None) -> dict:
-    from .document_ai import improve_pages
+    from .document_ai import enabled as document_ai_enabled, improve_pages
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    pages, ai_warnings = improve_pages(pages, source_images)
+    ai_warnings = []
+    natural_pages = set()
+    unclassified_image_pages = set()
+    if source_images and document_ai_enabled():
+        from .visual_layout import analyze_question_document
+        candidates = [page for page in pages if page["number"] in source_images]
+        try:
+            analysis = analyze_question_document([
+                {"page": page["number"], "source_id": f"page-{page['number']}",
+                 "source": page.get("image_source", "image_page"),
+                 "image": source_images[page["number"]]}
+                for page in candidates
+            ])
+        except Exception as exc:
+            logger.warning("Question document analysis failed pages=%d error=%s",
+                           len(candidates), type(exc).__name__)
+            unclassified_image_pages.update(page["number"] for page in candidates)
+            ai_warnings.append("Could not classify document pages from images; keeping the existing text flow.")
+        else:
+            unresolved = analysis.get("unresolved_regions", [])
+            unresolved_pages = sorted({item.get("page") for item in unresolved
+                                       if isinstance(item, dict) and item.get("page") in analysis["pages"]})
+            if unresolved_pages:
+                ai_warnings.append("Some image regions could not be assigned confidently on pages: "
+                                   + ", ".join(map(str, unresolved_pages)) + ".")
+            for page in candidates:
+                page_analysis = analysis["pages"].get(page["number"], {})
+                page["subject_hint"] = analysis["subject_hint"]
+                if analysis["subject_group"] != "natural":
+                    continue
+                natural_pages.add(page["number"])
+                page["method"] = "image"
+                page["text"] = ""
+                page["visuals"] = page_analysis.get("questions", [])
+                if analysis["subject_uncertain"]:
+                    ai_warnings.append(f"{page['label']}: subject classification is uncertain; retaining question content as images.")
+                if not page["visuals"]:
+                    ai_warnings.append(f"{page['label']}: no question frames detected; review the source image.")
+                elif any(question["uncertain"] for question in page["visuals"]):
+                    ai_warnings.append(f"{page['label']}: some question frames or page continuations are uncertain; review the source image.")
+
+    text_pages = [page for page in pages if page["number"] not in natural_pages
+                  and page["number"] not in unclassified_image_pages]
+    text_images = {number: image for number, image in (source_images or {}).items()
+                   if number not in natural_pages}
+    pages_by_number = {page["number"]: page for page in pages}
+    if text_pages:
+        improved, warnings = improve_pages(text_pages, text_images)
+        ai_warnings.extend(warnings)
+        for page in improved:
+            pages_by_number[page["number"]].update(page)
     if source_images:
-        for page in pages:
-            if page["text"] or page["number"] not in source_images:
-                continue
-            try:
-                page["text"], page["confidence"] = _ocr_image(_image(source_images[page["number"]]))
-                page["method"] = "ocr"
-                ai_warnings.append(f"{page['label']}: đã dùng OCR cục bộ vì AI không đọc được trang này.")
-            except ExtractionError:
-                pass
+        pending = [page for page in pages if not page["text"] and page["number"] in source_images
+                   and page["number"] not in natural_pages]
+        # OCR pages independently; Tesseract runs in child processes, so a
+        # small pool cuts a multi-page scan from serial page latency to roughly
+        # two or three waves while preserving the original order in `pages`.
+        with ThreadPoolExecutor(max_workers=min(3, max(1, len(pending)))) as pool:
+            futures = {pool.submit(_ocr_image, _image(source_images[page["number"]])): page
+                       for page in pending}
+            for future in as_completed(futures):
+                page = futures[future]
+                try:
+                    page["text"], page["confidence"] = future.result()
+                    page["method"] = "ocr"
+                    ai_warnings.append(f"{page['label']}: đã dùng OCR cục bộ vì AI không đọc được trang này.")
+                except ExtractionError:
+                    pass
     text = "\n\n".join(page["text"] for page in pages if page["text"]).strip()
-    if len(text) < 15:
+    has_image_questions = any(page.get("visuals") and page["number"] in natural_pages for page in pages)
+    if len(text) < 15 and not has_image_questions:
+        if natural_pages:
+            raise ExtractionError("AI chưa khoanh được câu hỏi trong ảnh; hãy thử ảnh rõ hơn hoặc chia ảnh theo từng câu.")
         raise ExtractionError("Không nhận diện đủ chữ; hãy dùng ảnh rõ hơn hoặc nhập nội dung trực tiếp.")
     if len(text) > MAX_TEXT_CHARS:
         raise ExtractionError("Nội dung vượt quá 150.000 ký tự; hãy chia tài liệu thành nhiều bộ đề.")
     warnings = [*ai_warnings, *[f"{page['label']} không đọc được chữ; cần kiểm tra bản gốc."
-                                 for page in pages if not page["text"]]]
+                                 for page in pages if not page["text"] and page["method"] != "image"]]
     if any(page["method"] == "ocr" for page in pages):
         warnings.append("OCR có thể sai dù điểm tin cậy cao; hãy đối chiếu các số liệu và chữ quan trọng với bản gốc.")
     warnings.extend(f"{page['label']} OCR chưa chắc chắn; cần xem lại chữ."
                     for page in pages if page["confidence"] is not None and page["confidence"] < 65)
+    warnings = list(dict.fromkeys(warnings))
     return {"text": text, "pages": pages, "blocks": _content_blocks(pages),
             "warnings": warnings, "document_type": classify_document(text, filename),
-            "subject": detect_subject(text, filename)}
+            "subject": subject_from_pages(pages, text, filename)}
+
+
+def _with_visuals(result: dict, sources: list[dict]) -> dict:
+    """Attach image provenance and optional AI regions without losing extracted text."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
+    from .config import positive_integer
+    from .visual_layout import analyze, enabled
+
+    pages = {page["number"]: page for page in result["pages"]}
+    use_model = enabled()
+    limit = positive_integer("DOCUMENT_VISUAL_MAX_SOURCES", 30)
+    timeout = positive_integer("DOCUMENT_AI_TIMEOUT_SECONDS", 30)
+    deadline = time.monotonic() + max(0, positive_integer("WORKER_JOB_TIMEOUT_SECONDS", 300) - 10)
+    failed = 0
+    pending = []
+    for index, source in enumerate(sources):
+        page = pages[source["page"]]
+        descriptor = {key: source[key] for key in ("source_id", "source", "media_path") if key in source}
+        page.setdefault("visual_sources", []).append(descriptor)
+        page.setdefault("visuals", [])
+        if any(item.get("kind") == "question" for item in page["visuals"]):
+            continue
+        if not use_model or not source.get("image"):
+            if source["source"] == "docx_media":
+                page["visuals"].append({"id": f"{source['source_id']}-region-1",
+                    "page": page["number"], "source_id": source["source_id"],
+                    "source": "docx_media", "kind": "other", "bbox": [0, 0, 1000, 1000],
+                    "orientation": "unknown", "question_label": None,
+                    "description": "Hình nhúng trong tài liệu Word", "uncertain": True,
+                    "link_status": "unreviewed"})
+            continue
+        # A scanned page is technically an image, but most pages contain only
+        # ordinary text. Do not spend another vision request on those pages;
+        # keep the source image and analyze on-demand when the OCR/context
+        # suggests a diagram, graph, table, formula, or figure.
+        page_text = page.get("text", "")
+        visual_hint = re.search(
+            r"(hình|biểu đồ|đồ thị|sơ đồ|bảng|công thức|hình vẽ|cho hình|dựa vào hình|quan sát hình)",
+            page_text,
+            flags=re.IGNORECASE,
+        )
+        if len(page_text) >= 80 and not visual_hint and source.get("source") in {"pdf_page", "office_page"}:
+            continue
+        if index >= limit or time.monotonic() + timeout > deadline:
+            failed += 1
+            continue
+        pending.append((page, source))
+    if pending:
+        # Vision calls are independent. A small pool reduces wall-clock time while
+        # staying below typical provider rate limits and preserving page order.
+        with ThreadPoolExecutor(max_workers=min(3, len(pending))) as pool:
+            futures = {
+                pool.submit(analyze, source["image"], page["text"], page["number"],
+                            source["source_id"], source["source"]): (page, source)
+                for page, source in pending
+            }
+            results = []
+            for future in as_completed(futures):
+                page, source = futures[future]
+                try:
+                    results.append((page["number"], future.result()))
+                except Exception:
+                    # The external model is advisory; a failure must not lose the upload.
+                    failed += 1
+            for page_number, visuals in sorted(results, key=lambda item: item[0]):
+                page = pages[page_number]
+                page["visuals"].extend(visuals)
+    if failed:
+        result["warnings"].append("Một số hình chưa được phân tích; bản gốc vẫn có thể xem để kiểm tra.")
+    return result
 
 
 def extract_image_batch(files: list[tuple[str, bytes]]) -> dict:
@@ -496,19 +735,22 @@ def extract_image_batch(files: list[tuple[str, bytes]]) -> dict:
 
     source_images = {} if document_ai_enabled() else None
     pages = []
+    visual_sources = []
     for number, (filename, data) in enumerate(files, start=1):
         validate_upload(filename, data)
         if Path(filename).suffix.lower() not in IMAGE_SUFFIXES:
             raise ExtractionError("Bộ ảnh chỉ nhận PNG, JPG/JPEG hoặc WEBP.", 415)
         image = _image(data)
+        visual_sources.append({"page": number, "source_id": f"page-{number}",
+                               "source": "image_page", "image": _jpeg_bytes(image)})
         if source_images is not None:
             source_images[number] = _jpeg_bytes(image)
             text, confidence = "", None
         else:
             text, confidence = _ocr_image(image)
         pages.append({"number": number, "label": f"Ảnh {number}: {filename}", "text": text,
-                      "method": "ocr", "confidence": confidence})
-    return _finalize_pages("bộ ảnh", pages, source_images)
+                      "method": "ocr", "confidence": confidence, "image_source": "image_page"})
+    return _with_visuals(_finalize_pages("bộ ảnh", pages, source_images), visual_sources)
 
 
 def extract_document(filename: str, data: bytes) -> dict:
@@ -516,32 +758,61 @@ def extract_document(filename: str, data: bytes) -> dict:
     validate_upload(filename, data)
     suffix = Path(filename).suffix.lower()
     from .document_ai import enabled as document_ai_enabled
+    from .visual_layout import enabled as visual_analysis_enabled
     source_images = {} if document_ai_enabled() else None
+    visual_sources = []
     try:
         if suffix in TEXT_DOCUMENT_SUFFIXES:
             text = _rich_text(data, suffix)
             pages = [{"number": 1, "label": f"Tệp {suffix[1:].upper()}", "text": text.strip(),
                       "method": "text", "confidence": None}]
         elif suffix == ".pdf":
-            pages = _pdf_pages(data, source_images)
+            pages = _pdf_pages(data, source_images, visual_sources, visual_analysis_enabled())
         elif suffix == ".docx":
             pages = _docx_pages(data)
+            visual_sources = _docx_visual_sources(data)
+            if source_images is not None:
+                try:
+                    pages, rendered_images, rendered_sources = _office_page_images(data, suffix)
+                except ExtractionError as exc:
+                    logger.warning("Could not render DOCX pages for layout analysis: %s", exc)
+                else:
+                    source_images.update(rendered_images)
+                    visual_sources = [*rendered_sources, *visual_sources]
         elif suffix == ".doc":
-            pages = _doc_pages(data)
+            if source_images is not None:
+                try:
+                    pages, rendered_images, visual_sources = _office_page_images(data, suffix)
+                except ExtractionError as exc:
+                    logger.warning("Could not render DOC pages for layout analysis: %s", exc)
+                    pages = _doc_pages(data)
+                else:
+                    source_images.update(rendered_images)
+            else:
+                pages = _doc_pages(data)
         elif suffix == ".odt":
             text = _odt_text(data)
-            pages = [{"number": 1, "label": "Tệp ODT", "text": text.strip(),
+            pages = [{"number": 1, "label": f"File {suffix[1:].upper()}", "text": text.strip(),
                       "method": "text", "confidence": None}]
+            if source_images is not None:
+                try:
+                    pages, rendered_images, visual_sources = _office_page_images(data, suffix)
+                except ExtractionError as exc:
+                    logger.warning("Could not render ODT pages for layout analysis: %s", exc)
+                else:
+                    source_images.update(rendered_images)
         else:
             image = _image(data)
+            visual_sources.append({"page": 1, "source_id": "page-1", "source": "image_page",
+                                   "image": _jpeg_bytes(image)})
             if source_images is not None:
                 source_images[1] = _jpeg_bytes(image)
                 text, confidence = "", None
             else:
                 text, confidence = _ocr_image(image)
             pages = [{"number": 1, "label": "Ảnh 1", "text": text,
-                      "method": "ocr", "confidence": confidence}]
-        return _finalize_pages(filename, pages, source_images)
+                      "method": "ocr", "confidence": confidence, "image_source": "image_page"}]
+        return _with_visuals(_finalize_pages(filename, pages, source_images), visual_sources)
     except ExtractionError:
         raise
     except Exception as exc:
@@ -555,6 +826,56 @@ def extract_image_archive(data: bytes) -> dict:
         if not 1 <= len(entries) <= 12 or any(entry.file_size > MAX_FILE_BYTES for entry in entries):
             raise ExtractionError("Bộ ảnh không hợp lệ")
         return extract_image_batch([(entry.filename, archive.read(entry)) for entry in entries])
+
+
+def render_visual_source(filename: str, data: bytes, page_number: int,
+                         source: dict, bbox: list[int] | None = None) -> bytes:
+    """Render a stored source in display orientation, optionally crop 0..1000 box."""
+    suffix = Path(filename).suffix.lower()
+    kind = source.get("source")
+    if kind == "pdf_page" and suffix == ".pdf":
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(data)
+        try:
+            if not 1 <= page_number <= len(document):
+                raise ExtractionError("Không tìm thấy trang", 404)
+            image = document[page_number - 1].render(scale=1.5).to_pil().convert("RGB")
+        finally:
+            document.close()
+    elif kind == "office_page" and suffix in {".doc", ".docx", ".odt"}:
+        _, page_images, _ = _office_page_images(data, suffix)
+        if page_number not in page_images:
+            raise ExtractionError("Could not find the requested rendered page.", 404)
+        image = _image(page_images[page_number])
+    elif kind == "image_page" and suffix in IMAGE_SUFFIXES and page_number == 1:
+        image = _image(data)
+    elif kind == "image_page" and suffix == ".imagebatch":
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            entries = archive.infolist()
+            if not 1 <= page_number <= len(entries):
+                raise ExtractionError("Không tìm thấy ảnh", 404)
+            image = _image(archive.read(entries[page_number - 1]))
+    elif kind == "docx_media" and suffix == ".docx":
+        path = source.get("media_path", "")
+        if not isinstance(path, str) or not path.startswith("word/media/") or ".." in path:
+            raise ExtractionError("Đường dẫn hình không hợp lệ", 404)
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            image = _image(archive.read(path))
+    else:
+        raise ExtractionError("Không tìm thấy hình", 404)
+    if image.width * image.height > MAX_IMAGE_PIXELS:
+        raise ExtractionError("Hình quá lớn để hiển thị", 422)
+    if bbox is not None:
+        if (len(bbox) != 4 or any(not isinstance(value, (int, float)) or not 0 <= value <= 1000
+                                  for value in bbox) or bbox[2] <= bbox[0] or bbox[3] <= bbox[1]):
+            raise ExtractionError("Vùng hình không hợp lệ", 422)
+        left, top, right, bottom = (round(bbox[0] * image.width / 1000),
+                                    round(bbox[1] * image.height / 1000),
+                                    round(bbox[2] * image.width / 1000),
+                                    round(bbox[3] * image.height / 1000))
+        image = image.crop((left, top, right, bottom))
+    return _jpeg_bytes(image)
 
 
 def extract_text(filename: str, data: bytes) -> str:

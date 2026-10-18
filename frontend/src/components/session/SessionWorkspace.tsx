@@ -51,7 +51,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
     if (!element) return;
     if (session.submitted && !previousSubmitted.current) {
       const result = element.querySelector<HTMLElement>(
-        '[aria-label="Báo cáo tư duy cuối phiên"], [data-session-complete]',
+        '[aria-label="Phiếu đánh giá Socratic"], [data-session-complete]',
       );
       result?.scrollIntoView({ block: "start" });
     } else if (nearBottom.current || activity) {
@@ -102,7 +102,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
     <div className="learning-workspace mx-auto flex h-0 min-h-0 min-w-0 flex-1 bg-background">
       <section
         className="flex h-full min-h-0 min-w-0 flex-1 flex-col"
-        aria-label="Không gian đối thoại Socratic"
+        aria-label="Không gian trao đổi với trợ lý"
       >
         <header className="learning-session-header shrink-0 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
             <div className="flex min-w-0 items-center justify-between gap-3">
@@ -245,7 +245,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
           >
             <div className="learning-conversation-content mx-auto w-full space-y-6 px-4 py-6 sm:px-6 sm:py-8">
               <p className="text-xs font-medium text-muted-foreground">
-                Đối thoại Socratic{session.tutor_mode !== "openai" ? " · Phiên kịch bản" : ""}
+                Trao đổi với trợ lý{session.tutor_mode !== "openai" ? " · Phiên kịch bản" : ""}
               </p>
               {children}
             </div>

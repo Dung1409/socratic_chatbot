@@ -207,7 +207,7 @@ export function LearningPanel({
                     className="max-w-64 bg-foreground text-sm leading-6 text-white"
                   >
                     Giá trị trong báo cáo do hệ thống đánh giá trả về, dựa trên số lượt hỗ trợ đã
-                    ghi nhận. Câu hỏi Socratic thông thường không tính là gợi ý.
+                    ghi nhận. Câu hỏi thông thường không tính là gợi ý.
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>

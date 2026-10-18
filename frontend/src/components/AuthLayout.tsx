@@ -36,7 +36,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
             <figcaption className="auth-conversation-header">
               <MessageCircle size={18} aria-hidden="true" />
               <span>
-                Một cuộc đối thoại gợi mở<small>Minh họa cách học Socratic</small>
+                Một cuộc đối thoại gợi mở<small>Minh họa cách trao đổi với trợ lý AI</small>
               </span>
             </figcaption>
             <div className="auth-conversation-body">

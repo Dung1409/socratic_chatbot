@@ -15,8 +15,8 @@ export const Route = createFileRoute("/phien-hoc")({
   }),
   head: () =>
     seo(
-      "Phiên học Socratic",
-      "Học cùng gia sư AI bằng chuỗi câu hỏi gợi mở theo thang Bloom và gợi ý tăng dần.",
+      "Học cùng AI",
+      "Trao đổi với trợ lý AI bằng chuỗi câu hỏi gợi mở theo thang Bloom và gợi ý tăng dần.",
     ),
   component: Session,
 });
@@ -54,7 +54,7 @@ function Session() {
       <div className="p-6 lg:p-10 space-y-4">
         <h1 className="text-2xl font-semibold">Bắt đầu phiên tự học đầu tiên</h1>
         <p className="text-muted-foreground">
-          Tải lên hoặc nhập đề riêng để học cùng gia sư Socratic.
+          Tải lên hoặc nhập đề riêng để học cùng trợ lý AI.
         </p>
         <Button asChild>
           <Link to="/de-bai">Thêm đề tự học</Link>

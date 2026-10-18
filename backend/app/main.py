@@ -11,11 +11,12 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .db import Database
 from .auth import AuthService, Principal, UNSAFE_METHODS, auth_router
-from .extraction import ExtractionError, MAX_FILE_BYTES, extract_document, extract_image_batch, extract_image_archive, validate_upload
+from .extraction import (ExtractionError, MAX_FILE_BYTES, extract_document, extract_image_batch,
+                         extract_image_archive, render_visual_source, validate_upload)
 from .structure import structure_text, question_context
 from .jobs import JobQueue
 from .schemas import (AssignmentInput, StructureInput, SessionInput, ActionInput, MessageInput, SubmissionInput,
@@ -45,6 +46,9 @@ def require(conn, collection, identifier, owner_id):
 def public_session(session):
     result = {key: value for key, value in session.items()
             if key not in {"requests", "rubric", "review", "student_id", "student_name", "class_name"}}
+    if isinstance(result.get("assignment"), dict):
+        result["assignment"] = {key: value for key, value in result["assignment"].items()
+                                if key != "owner_id"}
     if session.get("tutor_mode") == "openai":
         result["pending_action"] = public_pending(session.get("pending_action"))
     return result
@@ -60,7 +64,37 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     background_jobs = config.boolean("BACKGROUND_JOBS", False)
     queue = JobQueue(db, storage_path or config.storage_path())
     auth = AuthService(db)
-    tutor = tutor_engine or OpenAITutor()
+
+    def load_tutor_visuals(assignment):
+        document_id = assignment.get("document_id")
+        owner_id = assignment.get("owner_id")
+        refs = assignment.get("visual_refs") or []
+        if not document_id or not owner_id or not refs:
+            return []
+        document = queue.document(document_id, owner_id=owner_id)
+        original = queue.original(document_id, owner_id)
+        if document is None or original is None or not original[0].is_file():
+            return []
+        data = original[0].read_bytes()
+        images = []
+        for visual_id in refs[:3]:
+            for page in document["pages"]:
+                visual = next((value for value in page.get("visuals", [])
+                               if value.get("id") == visual_id), None)
+                if visual is None:
+                    continue
+                source = next((value for value in page.get("visual_sources", [])
+                               if value.get("source_id") == visual.get("source_id")), None)
+                if source is not None:
+                    try:
+                        images.append(render_visual_source(original[1], data, page["number"],
+                                                           source, visual.get("bbox")))
+                    except (ExtractionError, OSError, KeyError, ValueError):
+                        pass
+                break
+        return images
+
+    tutor = tutor_engine or OpenAITutor(visual_loader=load_tutor_visuals)
     tutor_mode = os.getenv("TUTOR_MODE", "openai")
     if tutor_mode not in ("openai", "template"):
         raise ValueError("TUTOR_MODE must be openai or template")
@@ -520,12 +554,62 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             filename = "bo-anh-goc.zip"
         return FileResponse(path, filename=filename, headers={"Cache-Control": "private, no-store"})
 
+    @app.get("/api/documents/{document_id}/pages/{page_number}/image", tags=["Documents"])
+    def document_page_image(document_id: str, page_number: int,
+                            user: Principal = Depends(auth.current_user)):
+        document = queue.document(document_id, owner_id=user.id)
+        original = queue.original(document_id, user.id)
+        if document is None or original is None or not original[0].is_file():
+            raise HTTPException(404, "Không tìm thấy tài liệu")
+        page = next((page for page in document["pages"] if page["number"] == page_number), None)
+        source = next((item for item in page.get("visual_sources", [])
+                       if item.get("source") in {"pdf_page", "office_page", "image_page"}), None) if page else None
+        if source is None:
+            raise HTTPException(404, "Trang này không có ảnh để xem")
+        try:
+            image = render_visual_source(original[1], original[0].read_bytes(), page_number, source)
+        except (ExtractionError, OSError, ValueError) as exc:
+            raise HTTPException(404, "Không hiển thị được trang") from exc
+        return Response(image, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
+
+    @app.get("/api/documents/{document_id}/visuals/{visual_id}/image", tags=["Documents"])
+    def document_visual_image(document_id: str, visual_id: str,
+                              user: Principal = Depends(auth.current_user)):
+        document = queue.document(document_id, owner_id=user.id)
+        original = queue.original(document_id, user.id)
+        if document is None or original is None or not original[0].is_file():
+            raise HTTPException(404, "Không tìm thấy tài liệu")
+        for page in document["pages"]:
+            visual = next((item for item in page.get("visuals", []) if item.get("id") == visual_id), None)
+            if visual is None:
+                continue
+            source = next((item for item in page.get("visual_sources", [])
+                           if item.get("source_id") == visual.get("source_id")), None)
+            if source is None:
+                break
+            try:
+                image = render_visual_source(original[1], original[0].read_bytes(),
+                                             page["number"], source, visual.get("bbox"))
+            except (ExtractionError, OSError, KeyError, ValueError) as exc:
+                raise HTTPException(404, "Không hiển thị được hình") from exc
+            return Response(image, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
+        raise HTTPException(404, "Không tìm thấy hình")
+
     def item_assignment(base, item, items):
+        item = dict(item)
+        metadata = _decode_json(item.get("metadata_json"), {}) if "metadata_json" in item else item.get("metadata", {})
+        metadata = metadata if isinstance(metadata, dict) else {}
+        visual_refs = metadata.get("visual_refs")
+        visual_refs = visual_refs if isinstance(visual_refs, list) else []
         assignment = dict(base)
         assignment.update(
             prompt=item["prompt"], task_type=item["item_type"], active_item_id=item["id"],
             items=[dict(entry) for entry in items],
             source_text=item["context"] or base.get("source_text", ""),
+            subject=metadata.get("subject") or base.get("subject") or "chưa xác định",
+            question_type=metadata.get("question_type") or "open_response",
+            visual_refs=[value for value in visual_refs
+                         if isinstance(value, str)][:10],
         )
         return assignment
 
@@ -540,7 +624,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 row = db.execute(conn, "SELECT * FROM assignments WHERE id=? AND owner_id=?",
                                  (body.assignment_id, user.id)).fetchone()
                 if row is not None:
-                    items = db.execute(conn, """SELECT id, label, prompt, context, item_type, item_order
+                    items = db.execute(conn, """SELECT id, label, prompt, context, item_type, item_order, metadata_json
                         FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
                                        (body.assignment_id,)).fetchall()
                     assignment = {
@@ -549,13 +633,14 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                             f"{item['label']}: {item['prompt']}" for item in items),
                         "items": [dict(item) for item in items],
                         "source_text": row["source_text"], "source": "student",
+                        "document_id": row["document_id"],
                         "target": 4, "status": "Chưa bắt đầu",
                     }
                     Database.put(conn, "assignments", body.assignment_id, assignment, user.id)
             if assignment is None:
                 raise HTTPException(404, "Không tìm thấy dữ liệu")
             saved = [s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id]
-            ordered_items = db.execute(conn, """SELECT id, label, prompt, context, item_type
+            ordered_items = db.execute(conn, """SELECT id, label, prompt, context, item_type, metadata_json
                 FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (body.assignment_id,)).fetchall()
             first_item_id = ordered_items[0]["id"] if ordered_items else None
             existing = next((s for s in saved
@@ -566,9 +651,11 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 selected = next((entry for entry in ordered_items if entry["id"] ==
                                  (existing.get("assignment") or {}).get("active_item_id")), ordered_items[0])
                 existing["assignment"] = item_assignment(existing["assignment"], selected, ordered_items)
+                existing["assignment"]["owner_id"] = user.id
                 db.put(conn, "sessions", existing["id"], existing, owner_id=user.id)
             elif ordered_items:
                 assignment = item_assignment(assignment, ordered_items[0], ordered_items)
+            assignment["owner_id"] = user.id
         if existing:
             return public_session(adaptive.prepare_item(existing["id"], user.id)
                                   if existing.get("tutor_mode") == "openai" else existing)
@@ -604,7 +691,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         with db.connect() as conn:
             session = require(conn, "sessions", session_id, user.id)
             assignment_id = session.get("assignment_id")
-            all_items = db.execute(conn, """SELECT id, label, prompt, context, item_type
+            all_items = db.execute(conn, """SELECT id, label, prompt, context, item_type, metadata_json
                 FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (assignment_id,)).fetchall()
             item = next((entry for entry in all_items if entry["id"] == body.item_id), None)
             if item is None:
@@ -616,11 +703,13 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             with db.connect(write=True) as conn:
                 candidate = require(conn, "sessions", candidate["id"], user.id)
                 candidate["assignment"] = item_assignment(candidate["assignment"], item, all_items)
+                candidate["assignment"]["owner_id"] = user.id
                 candidate["updated_at"] = now()
                 db.put(conn, "sessions", candidate["id"], candidate, owner_id=user.id)
             return public_session(adaptive.prepare_item(candidate["id"], user.id)
                                   if candidate.get("tutor_mode") == "openai" else candidate)
         assignment = item_assignment(session["assignment"], item, all_items)
+        assignment["owner_id"] = user.id
         if session.get("tutor_mode") == "openai":
             return public_session(adaptive.start(assignment, user.id))
         with db.connect(write=True) as conn:
@@ -648,13 +737,14 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def prepare_session(session_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect(write=True) as conn:
             session = require(conn, "sessions", session_id, user.id)
-            items = db.execute(conn, """SELECT id, label, prompt, context, item_type
+            items = db.execute(conn, """SELECT id, label, prompt, context, item_type, metadata_json
                 FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
                                (session["assignment_id"],)).fetchall()
             if items:
                 active_id = (session.get("assignment") or {}).get("active_item_id") or items[0]["id"]
                 item = next((entry for entry in items if entry["id"] == active_id), items[0])
                 assignment = item_assignment(session["assignment"], item, items)
+                assignment["owner_id"] = user.id
                 if session["assignment"] != assignment:
                     session["assignment"] = assignment
                     db.put(conn, "sessions", session_id, session, owner_id=user.id)

@@ -7,13 +7,13 @@ export function AssessmentReport({ report }: { report: Assessment }) {
   return (
     <section
       className="rounded-xl border bg-card p-5 sm:p-6 space-y-6"
-      aria-label="Báo cáo tư duy cuối phiên"
+      aria-label="Phiếu đánh giá Socratic"
     >
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-secondary">
           Kết quả phiên học
         </p>
-        <h2 className="mt-1 text-xl font-semibold">Báo cáo tư duy cuối phiên</h2>
+        <h2 className="mt-1 text-xl font-semibold">Phiếu đánh giá Socratic</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           {report.status === "complete"
             ? "Kết quả thể hiện trong phiên này, dựa trên câu trả lời và bài tổng hợp của em."

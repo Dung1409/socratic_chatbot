@@ -46,7 +46,7 @@ export const Route = createFileRoute("/de-bai")({
   head: () =>
     seo(
       "Tài liệu của tôi",
-      "Tải đề bài hoặc tài liệu học tập và bắt đầu phiên học cùng gia sư Socratic.",
+      "Tải đề bài hoặc tài liệu học tập và bắt đầu học cùng trợ lý AI.",
     ),
   component: Page,
 });
@@ -131,6 +131,9 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
   const [detailEditable, setDetailEditable] = useState(false);
   const [questionsOpen, setQuestionsOpen] = useState(true);
   const [questionListOpen, setQuestionListOpen] = useState(true);
+  const [expandedParts, setExpandedParts] = useState<Record<string, boolean>>({});
+  const [expandedQuestions, setExpandedQuestions] = useState<Record<string, boolean>>({});
+  const [contentModalQuestion, setContentModalQuestion] = useState<ParsedQuestion | null>(null);
   const [busy, setBusy] = useState(false);
   const previews = useRef<string[]>([]);
   const documentInput = useRef<HTMLInputElement>(null);
@@ -202,6 +205,8 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
     const questions = parsed.parts.flatMap((part) => part.questions);
     setSelectedIds(questions.length === 1 && firstQuestion ? [firstQuestion.id] : []);
     setPrompt(firstQuestion?.context ?? "");
+    setExpandedParts(firstPart ? { [firstPart.id]: true } : {});
+    setExpandedQuestions(firstQuestion ? { [firstQuestion.id]: true } : {});
   };
   const upload = async (selected?: File) => {
     if (!selected || busy) return;
@@ -422,6 +427,9 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
             question_id: question.id,
             points: question.points,
             source_only: isSourceOnly(question),
+            subject: question.subject_hint || subject,
+            question_type: question.question_type ?? "open_response",
+            visual_refs: question.visual_refs ?? [],
           },
         }));
       if (!selectedItems.length || selectedItems.some((item) => !item.prompt.trim()))
@@ -466,6 +474,49 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
     (question) =>
       question.id === selectedId || question.ideas.some((idea) => idea.id === selectedId),
   );
+  const selectedVisuals = (structure?.visuals ?? []).filter(
+    (visual) =>
+      selectedQuestion &&
+      (selectedQuestion.visual_refs?.includes(visual.id) ||
+        selectedQuestion.visual_candidates?.includes(visual.id)),
+  );
+  const modalVisuals = (structure?.visuals ?? []).filter(
+    (visual) =>
+      contentModalQuestion?.visual_refs?.includes(visual.id) ||
+      contentModalQuestion?.visual_candidates?.includes(visual.id),
+  );
+  const toggleVisualLink = (questionId: string, visualId: string) => {
+    setStructure((current) => {
+      if (!current) return current;
+      const question = current.parts.flatMap((part) => part.questions).find((item) => item.id === questionId);
+      if (!question) return current;
+      const linked = question.visual_refs?.includes(visualId) ?? false;
+      return {
+        ...current,
+        parts: current.parts.map((part) => ({
+          ...part,
+          questions: part.questions.map((item) =>
+            item.id === questionId
+              ? {
+                  ...item,
+                  visual_refs: linked
+                    ? (item.visual_refs ?? []).filter((id) => id !== visualId)
+                    : [...(item.visual_refs ?? []), visualId],
+                }
+              : item,
+          ),
+        })),
+        visuals: (current.visuals ?? []).map((visual) => {
+          if (visual.id !== visualId) return visual;
+          const questionIds = linked
+            ? (visual.question_ids ?? []).filter((id) => id !== questionId)
+            : [...new Set([...(visual.question_ids ?? []), questionId])];
+          return { ...visual, question_ids: questionIds,
+                   link_status: questionIds.length ? "confirmed" as const : "unreviewed" as const };
+        }),
+      };
+    });
+  };
   const sharedParagraphs = filterSourceParagraphs(selectedPart?.paragraphs ?? []);
   const sharedSourceLayout = classifyTextLayout(
     sharedParagraphs.map((paragraph) => paragraph.text).join("\n"),
@@ -1060,17 +1111,25 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                                 key={part.id}
                                 className="overflow-hidden rounded-xl border bg-background"
                               >
-                                <h3 className="border-b bg-muted/50 px-4 py-3 text-sm font-semibold">
-                                  {part.title}
-                                </h3>
-                                <div className="space-y-1 p-2">
+                                <button
+                                  type="button"
+                                  className="flex min-h-12 w-full items-center justify-between gap-3 border-b bg-muted/50 px-4 py-3 text-left text-sm font-semibold hover:bg-muted"
+                                  aria-expanded={Boolean(expandedParts[part.id])}
+                                  onClick={() => setExpandedParts((current) => ({ ...current, [part.id]: !current[part.id] }))}
+                                >
+                                  <span>{part.title}</span>
+                                  <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${expandedParts[part.id] ? "rotate-180" : ""}`} />
+                                </button>
+                                <div hidden={!expandedParts[part.id]} className="space-y-1 p-2">
                                   {part.questions.map((question) => {
                                     const active = selectedQuestion?.id === question.id;
+                                    const expanded = Boolean(expandedQuestions[question.id]);
                                     return (
                                       <div
                                         key={question.id}
-                                        className={`flex items-start gap-2 rounded-lg border px-3 py-3 transition-colors ${active ? "border-primary bg-primary/10" : "border-transparent hover:border-border hover:bg-muted/50"}`}
+                                        className={`rounded-lg border transition-colors ${active ? "border-primary bg-primary/10" : "border-transparent hover:border-border hover:bg-muted/50"}`}
                                       >
+                                        <div className="flex items-start gap-2 px-3 py-3">
                                         <input
                                           type="checkbox"
                                           aria-label={`Chọn ${question.label}`}
@@ -1101,6 +1160,39 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                                             </span>
                                           )}
                                         </button>
+                                        <button
+                                          type="button"
+                                          className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          aria-label={`${expanded ? "Thu gọn" : "Mở rộng"} ${question.label}`}
+                                          aria-expanded={expanded}
+                                          onClick={() => setExpandedQuestions((current) => ({ ...current, [question.id]: !current[question.id] }))}
+                                        >
+                                          <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                                        </button>
+                                        </div>
+                                        <div hidden={!expanded} className="border-t px-10 pb-3 pt-2">
+                                          {(question.options?.length ?? 0) > 0 && (
+                                            <ol className="grid gap-2 sm:grid-cols-2">
+                                              {question.options?.map((option) => (
+                                                <li key={option.label} className="rounded-md border bg-background p-2 text-xs">
+                                                  <span className="mr-2 font-semibold text-primary">{option.label}.</span>{option.text}
+                                                </li>
+                                              ))}
+                                            </ol>
+                                          )}
+                                          {(question.statements?.length ?? 0) > 0 && (
+                                            <ol className="space-y-1 text-xs">
+                                              {question.statements?.map((statement) => (
+                                                <li key={statement.label} className="rounded-md border bg-background p-2">
+                                                  <span className="mr-2 font-semibold text-primary">{statement.label})</span>{statement.text}
+                                                </li>
+                                              ))}
+                                            </ol>
+                                          )}
+                                          <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => setContentModalQuestion(question)}>
+                                            Xem nội dung / hình ảnh
+                                          </Button>
+                                        </div>
                                       </div>
                                     );
                                   })}
@@ -1122,6 +1214,17 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                                 <h3 className="mt-1 text-xl font-semibold">
                                   {selectedQuestion.label}
                                 </h3>
+                                {selectedQuestion.question_type && (
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {{
+                                      multiple_choice: "Trắc nghiệm chọn đáp án",
+                                      true_false: "Trắc nghiệm đúng – sai",
+                                      short_answer: "Trả lời ngắn",
+                                      essay: "Tự luận",
+                                      open_response: "Câu hỏi mở",
+                                    }[selectedQuestion.question_type]}
+                                  </p>
+                                )}
                               </div>
                               <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                                 {selectedQuestion.points && (
@@ -1134,6 +1237,9 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                                     Trang/ảnh {selectedQuestion.source_pages.join(", ")}
                                   </span>
                                 )}
+                                <Button type="button" size="sm" variant="outline" onClick={() => setContentModalQuestion(selectedQuestion)}>
+                                  Xem nội dung
+                                </Button>
                               </div>
                             </header>
                             {selectedQuestion.task ? (
@@ -1154,6 +1260,106 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                                 nguyên bên dưới để em đọc và đặt câu hỏi học tập.
                               </p>
                             )}
+                            {(selectedQuestion.options?.length ?? 0) > 0 && (
+                              <details className="rounded-lg border p-4">
+                                <summary className="cursor-pointer text-sm font-semibold">
+                                  Các phương án ({selectedQuestion.options?.length})
+                                </summary>
+                                <ol className="mt-3 grid gap-2 sm:grid-cols-2">
+                                  {selectedQuestion.options?.map((option) => (
+                                    <li key={option.label} className="rounded-md border bg-muted/20 p-3 text-sm">
+                                      <span className="mr-2 font-semibold text-primary">{option.label}.</span>
+                                      {option.text}
+                                    </li>
+                                  ))}
+                                </ol>
+                              </details>
+                            )}
+                            {(selectedQuestion.statements?.length ?? 0) > 0 && (
+                              <details className="rounded-lg border p-4">
+                                <summary className="cursor-pointer text-sm font-semibold">
+                                  Các mệnh đề đúng – sai ({selectedQuestion.statements?.length})
+                                </summary>
+                                <ol className="mt-3 space-y-2">
+                                  {selectedQuestion.statements?.map((statement) => (
+                                    <li key={statement.label} className="rounded-md border bg-muted/20 p-3 text-sm">
+                                      <span className="mr-2 font-semibold text-primary">{statement.label})</span>
+                                      {statement.text}
+                                    </li>
+                                  ))}
+                                </ol>
+                              </details>
+                            )}
+                            {selectedVisuals.length > 0 && (
+                              <details
+                                hidden={selectedVisuals.every((visual) => visual.kind !== "question")}
+                                open={selectedVisuals.some((visual) => visual.kind === "question")}
+                                className="rounded-lg border p-4"
+                              >
+                                <summary className="cursor-pointer text-sm font-semibold">
+                                  Hình, bảng hoặc sơ đồ liên quan ({selectedVisuals.length})
+                                </summary>
+                                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                  {selectedVisuals.some((visual) => visual.kind === "question")
+                                    ? "Khung ảnh câu hỏi được giữ nguyên để gia sư AI đọc trực tiếp. Chọn ảnh để xem bản lớn và đối chiếu khung cắt."
+                                    : "Liên kết hình do AI đề xuất; hãy đối chiếu với tài liệu trước khi học."}
+                                </p>
+                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                  {selectedVisuals.map((visual) => (
+                                    <figure key={visual.id} className="min-w-0 rounded-md border bg-background p-3">
+                                      {documentId && (
+                                        <a
+                                          href={`/api/documents/${documentId}/visuals/${visual.id}/image`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          aria-label={`Mở ${visual.kind === "question" ? "ảnh câu hỏi" : "hình"} trang ${visual.page} kích thước đầy đủ`}
+                                          className="block rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                                        >
+                                          <img
+                                            src={`/api/documents/${documentId}/visuals/${visual.id}/image`}
+                                            alt={visual.kind === "question"
+                                              ? `Ảnh câu hỏi ${visual.question_label ?? ""}${visual.section ? `, ${visual.section}` : ""}, trang ${visual.page}`
+                                              : visual.description || `${visual.kind} trên trang ${visual.page}`}
+                                            loading="lazy"
+                                            className="max-h-72 max-w-full rounded object-contain"
+                                          />
+                                        </a>
+                                      )}
+                                      <figcaption className="mt-2 text-xs text-muted-foreground">
+                                        {visual.kind === "question" ? (
+                                          <>
+                                            Ảnh câu hỏi
+                                            {visual.question_label ? ` · ${visual.question_label}` : ""}
+                                            {visual.section ? ` · ${visual.section}` : ""}
+                                            {` · Trang ${visual.page}`}
+                                          </>
+                                        ) : (
+                                          `Trang ${visual.page} · ${visual.kind}`
+                                        )}
+                                        {visual.uncertain ? " · Cần đối chiếu khung ảnh" : ""}
+                                        {visual.link_status === "unreviewed"
+                                          ? " · Chưa gắn với câu"
+                                          : visual.link_status === "proposed"
+                                            ? " · AI đề xuất"
+                                            : " · Đã xác nhận"}
+                                        {visual.description ? ` · ${visual.description}` : ""}
+                                      </figcaption>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant={selectedQuestion.visual_refs?.includes(visual.id) ? "secondary" : "outline"}
+                                        className="mt-2"
+                                        onClick={() => toggleVisualLink(selectedQuestion.id, visual.id)}
+                                      >
+                                        {selectedQuestion.visual_refs?.includes(visual.id)
+                                          ? visual.kind === "question" ? "Gỡ ảnh câu hỏi" : "Bỏ liên kết"
+                                          : visual.kind === "question" ? "Gắn ảnh câu hỏi vào câu này" : "Dùng hình cho câu này"}
+                                      </Button>
+                                    </figure>
+                                  ))}
+                                </div>
+                              </details>
+                            )}
                             {selectedIdea && (
                               <section
                                 className="rounded-lg border border-primary/30 p-4"
@@ -1168,7 +1374,7 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                               </section>
                             )}
                             {selectedQuestion.materials && (
-                              <section
+                              <section hidden
                                 aria-label="Ngữ liệu đi kèm"
                                 className="rounded-lg border bg-muted/30 p-4 sm:p-5"
                               >
@@ -1212,7 +1418,7 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                               </section>
                             )}
                             {sharedParagraphs.length > 0 && (
-                              <details className="group rounded-lg border bg-background p-4">
+                              <details hidden className="group rounded-lg border bg-background p-4">
                                 <summary className="cursor-pointer text-sm font-semibold focus-visible:outline-2 focus-visible:outline-primary">
                                   03 · Đọc ngữ liệu chung của phần này ({sharedParagraphs.length}{" "}
                                   mục)
@@ -1300,7 +1506,7 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                                 Khối nội dung đã chọn · Trang {selectedBlock.page}
                               </p>
-                              <h3 className="mt-1 text-xl font-semibold">Sẵn sàng học Socratic</h3>
+                              <h3 className="mt-1 text-xl font-semibold">Bắt đầu với trợ lý</h3>
                             </header>
                             <section className="rounded-lg border border-primary/30 bg-primary/5 p-4">
                               <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
@@ -1329,8 +1535,8 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                     {busy
                       ? "Đang xử lý…"
                       : selectedIds.length > 1
-                        ? `Bắt đầu học ${selectedIds.length} câu`
-                        : "Bắt đầu học"}
+                        ? `Bắt đầu ${selectedIds.length} câu`
+                        : "Bắt đầu"}
                   </Button>
                 )}
                 {structure && !needsSourceChoice && startReason && (
@@ -1422,6 +1628,46 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
           </details>
         </div>
       </div>
+      <Dialog open={Boolean(contentModalQuestion)} onOpenChange={(open) => !open && setContentModalQuestion(null)}>
+        <DialogContent className="flex max-h-[88dvh] w-[calc(100%-24px)] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-6 py-5 pr-14">
+            <DialogTitle>Nội dung liên quan · {contentModalQuestion?.label ?? "Câu hỏi"}</DialogTitle>
+            <DialogDescription>
+              Ngữ liệu, hình ảnh và phần tham khảo được tách khỏi danh sách câu hỏi.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+            {contentModalQuestion?.materials && (
+              <section className="rounded-lg border bg-muted/20 p-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ngữ liệu</h3>
+                <div className="mt-3 space-y-4 text-sm leading-7">
+                  {classifyTextLayout(contentModalQuestion.materials, contentModalQuestion.task || contentModalQuestion.text) === "poetry"
+                    ? <p className="whitespace-pre-wrap break-words">{contentModalQuestion.materials}</p>
+                    : splitProseParagraphs(contentModalQuestion.materials).map((paragraph, index) => (
+                        <p key={index}>{paragraph}</p>
+                      ))}
+                </div>
+              </section>
+            )}
+            {modalVisuals.length > 0 && (
+              <section className="rounded-lg border p-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Hình ảnh liên quan</h3>
+                <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                  {modalVisuals.map((visual) => (
+                    <figure key={visual.id} className="rounded-lg border bg-muted/10 p-3">
+                      {documentId && <img src={`/api/documents/${documentId}/visuals/${visual.id}/image`} alt={visual.description || `Hình ${visual.page}`} className="max-h-[420px] w-full rounded object-contain" loading="lazy" />}
+                      <figcaption className="mt-2 text-xs text-muted-foreground">Trang {visual.page} · {visual.kind}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+              </section>
+            )}
+            {!contentModalQuestion?.materials && modalVisuals.length === 0 && (
+              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Câu này không có ngữ liệu hoặc hình ảnh riêng.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="flex max-h-[90dvh] w-[calc(100%-24px)] max-w-6xl flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-6 py-5 pr-14">

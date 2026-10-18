@@ -151,7 +151,9 @@ def public_api_origin():
 def validate_runtime(database, worker=False):
     auto_migrate()
     positive_integer("WORKER_JOB_TIMEOUT_SECONDS", 300)
-    positive_integer("DOCUMENT_AI_TIMEOUT_SECONDS", 30)
+    # Vision transcription can take longer than text-only calls. The parser
+    # remains isolated, so this timeout cannot block the API process.
+    positive_integer("DOCUMENT_AI_TIMEOUT_SECONDS", 60)
     positive_integer("WORKER_PARSER_MEMORY_MB", 512)
     positive_integer("DB_STATEMENT_TIMEOUT_MS", 30000)
     positive_integer("DB_LOCK_TIMEOUT_MS", 5000)

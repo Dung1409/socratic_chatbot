@@ -17,6 +17,8 @@ export function AssignmentPanel({
   const promptId = useId();
   const { assignment, plan } = session;
   const taskType = plan?.task_type ?? assignment.task_type;
+  const questionImages = assignment.document_id ? (assignment.visual_refs ?? []) : [];
+  const imageOnlyQuestion = taskType === "other" && questionImages.length > 0;
 
   useLayoutEffect(() => {
     const element = prompt.current;
@@ -45,16 +47,23 @@ export function AssignmentPanel({
               : "Đề tự học"}
           {assignment.grade ? ` · Lớp ${assignment.grade}` : ""}
         </p>
-        <p
-          ref={prompt}
-          id={promptId}
-          className={cn(
-            "mt-4 whitespace-pre-wrap break-words text-base leading-7",
-            !expanded && "line-clamp-[10]",
-          )}
-        >
-          {assignment.prompt}
-        </p>
+        {imageOnlyQuestion && (
+          <p className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm leading-6">
+            Nội dung câu hỏi được giữ nguyên dưới dạng ảnh đính kèm để gia sư AI đọc trực tiếp, không chuyển thành văn bản OCR.
+          </p>
+        )}
+        {assignment.prompt.trim() && (
+          <p
+            ref={prompt}
+            id={promptId}
+            className={cn(
+              "mt-4 whitespace-pre-wrap break-words text-base leading-7",
+              !expanded && "line-clamp-[10]",
+            )}
+          >
+            {assignment.prompt}
+          </p>
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
           {overflows && (
             <Button
@@ -108,6 +117,39 @@ export function AssignmentPanel({
             {assignment.source_text}
           </p>
         </details>
+      )}
+      {questionImages.length > 0 && (
+        <section className="border-t pt-5" aria-labelledby="assignment-question-images">
+          <h3 id="assignment-question-images" className="text-sm font-semibold">
+            Ảnh câu hỏi gửi cho AI ({questionImages.length})
+          </h3>
+          <div className="mt-3 space-y-4">
+            {questionImages.map((visualId, index) => {
+              const imageUrl = `/api/documents/${assignment.document_id}/visuals/${visualId}/image`;
+              return (
+                <figure key={visualId} className="overflow-hidden rounded-lg border bg-background">
+                  <a
+                    href={imageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`Mở ảnh câu hỏi ${index + 1} kích thước đầy đủ`}
+                    className="block bg-muted/20 p-2 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+                  >
+                    <img
+                      src={imageUrl}
+                      alt={`Ảnh câu hỏi đính kèm ${index + 1}`}
+                      loading="lazy"
+                      className="max-h-[560px] w-full rounded-md object-contain"
+                    />
+                  </a>
+                  <figcaption className="px-3 py-2 text-xs text-muted-foreground">
+                    Câu hỏi gốc · Ảnh {index + 1} · Chọn ảnh để mở lớn
+                  </figcaption>
+                </figure>
+              );
+            })}
+          </div>
+        </section>
       )}
     </div>
   );

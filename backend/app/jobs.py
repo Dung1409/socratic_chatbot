@@ -7,7 +7,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from .db import Database
-from .extraction import MAX_FILE_BYTES, _content_blocks, classify_document, detect_subject, validate_upload
+from .extraction import (MAX_FILE_BYTES, _content_blocks, classify_document,
+                         subject_from_pages, validate_upload)
 from .structure import structure_text
 
 
@@ -124,9 +125,10 @@ class JobQueue:
         result["pages"] = json.loads(result.pop("extracted_pages") or "[]")
         result["extraction_warnings"] = json.loads(result["extraction_warnings"] or "[]")
         result["blocks"] = _content_blocks(result["pages"]) if result["pages"] else []
-        result["structure"] = structure_text(result["text"], result["pages"]) if result["text"] else None
+        result["structure"] = structure_text(result["text"] or "", result["pages"]) \
+            if result["text"] or result["pages"] else None
         result["document_type"] = classify_document(result["text"] or "", result["filename"])
-        result["subject"] = detect_subject(result["text"] or "", result["filename"])
+        result["subject"] = subject_from_pages(result["pages"], result["text"] or "", result["filename"])
         review = json.loads(result.pop("reviewed_content") or "null")
         result["review"] = review
         if review:

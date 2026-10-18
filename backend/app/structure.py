@@ -10,7 +10,8 @@ from collections import Counter
 
 SECTION = re.compile(
     r"^\s*(?:PHAN\s+)?(?:[IVXILl1]+|\d{1,2})\s*[.):\-–]?\s+"
-    r"(?:DOC HIEU|LAM VAN|VIET|TIENG VIET|NGHI LUAN)\b",
+    r"(?:DOC HIEU|LAM VAN|VIET|TIENG VIET|NGHI LUAN|TRAC NGHIEM|"
+    r"CAU TRAC NGHIEM|CAU HOI TRAC NGHIEM|TU LUAN|TRA LOI NGAN|CAU TRA LOI NGAN)\b",
     re.IGNORECASE,
 )
 QUESTION = re.compile(
@@ -22,6 +23,8 @@ QUESTION = re.compile(
 INLINE_QUESTION = re.compile(r"(?<=[.!?])\s+(?=(?:Câu|Bài)\s*(?:\d{1,3}|[Šš])\s*[.):])")
 OCR_QUESTION_NUMBER = re.compile(r"^(\s*(?:Câu|Bài)\s*)[Šš](?=\s*[.):])")
 IDEA = re.compile(r"^\s*(?:\(([a-h])\)|([a-h])[.)])\s+(.+)$", re.IGNORECASE)
+CHOICE = re.compile(r"^\s*([A-H])[.)]\s+(.+)$")
+INLINE_CHOICE = re.compile(r"(?<!\w)([A-D])[.)]\s+")
 ANSWER_KEY = re.compile(r"^\s*(?:ĐÁP ÁN|HƯỚNG DẪN CHẤM|GỢI Ý ĐÁP ÁN|THANG ĐIỂM)\b", re.IGNORECASE)
 PAGE_NUMBER = re.compile(r"[:;.,\-–]?\s*(?:trang|page)\s*(\d{1,3})(?:\s*(?:/|trên|of)\s*\d{1,3})?\s*$", re.IGNORECASE)
 NUMBERED_PARAGRAPH = re.compile(r"^\s*\((\d{1,2})\)\s+")
@@ -129,7 +132,32 @@ def _question_source_lines(lines):
     """Recover question boundaries lost when OCR joins two lines."""
     for line in lines:
         for value in INLINE_QUESTION.split(line["text"]):
-            yield {**line, "text": OCR_QUESTION_NUMBER.sub(r"\g<1>5", value)}
+            value = OCR_QUESTION_NUMBER.sub(r"\g<1>5", value)
+            markers = list(INLINE_CHOICE.finditer(value))
+            # Split only a visible A/B/C/D sequence; a lone abbreviation is not an option.
+            if len(markers) < 2 or [match.group(1) for match in markers] != sorted(
+                    {match.group(1) for match in markers}):
+                yield {**line, "text": value}
+                continue
+            if value[:markers[0].start()].strip():
+                yield {**line, "text": value[:markers[0].start()].strip()}
+            for index, marker in enumerate(markers):
+                end = markers[index + 1].start() if index + 1 < len(markers) else len(value)
+                yield {**line, "text": value[marker.start():end].strip()}
+
+
+def _question_type(part_title, question):
+    heading = _fold(part_title)
+    prompt = _fold(question["text"])
+    if "DUNG SAI" in heading or "DUNG HAY SAI" in prompt:
+        return "true_false"
+    if len(question["options"]) >= 2 or "TRAC NGHIEM" in heading:
+        return "multiple_choice"
+    if "TRA LOI NGAN" in heading:
+        return "short_answer"
+    if any(value in heading for value in ("TU LUAN", "VIET", "LAM VAN", "NGHI LUAN")):
+        return "essay"
+    return "open_response"
 
 
 def _repeated_edges(pages):
@@ -210,6 +238,92 @@ def _notes_for_question(question_text, source_text, footnotes):
     return selected
 
 
+def _visual_links(parts, pages):
+    """Propose links only when source-page and question label agree unambiguously."""
+    questions = [question for part in parts for question in part["questions"]]
+    visuals = []
+    for page in pages or []:
+        page_number = page["number"]
+        on_page = [question for question in questions if page_number in question["source_pages"]]
+        if not on_page:
+            # A shared diagram may precede its questions on the next page.
+            on_page = [question for part in parts if page_number in part["source_pages"]
+                       for question in part["questions"]]
+        if not on_page:
+            on_page = [question for question in questions
+                       if page_number + 1 in question["source_pages"]]
+        for raw in page.get("visuals", []):
+            if not isinstance(raw, dict) or not isinstance(raw.get("id"), str):
+                continue
+            visual = dict(raw)
+            label = _fold(visual.get("question_label") or "").strip()
+            matched = [question for question in on_page
+                       if page_number in question["source_pages"] and _fold(question["label"]) == label] \
+                if label else []
+            visual["candidate_question_ids"] = [question["id"] for question in on_page]
+            visual["question_ids"] = [matched[0]["id"]] if len(matched) == 1 else []
+            visual["link_status"] = "proposed" if visual["question_ids"] else "unreviewed"
+            visuals.append(visual)
+            for question in on_page:
+                field = "visual_refs" if question["id"] in visual["question_ids"] else "visual_candidates"
+                refs = question.setdefault(field, [])
+                if visual["id"] not in refs:
+                    refs.append(visual["id"])
+    return visuals
+
+
+def _append_image_questions(parts, pages):
+    """Expose natural-science questions as image crops, without transcribing them."""
+    for page in pages or []:
+        for visual in page.get("visuals", []):
+            if not isinstance(visual, dict) or visual.get("kind") != "question":
+                continue
+            title = visual.get("section") or "C\u00e2u h\u1ecfi t\u1eeb \u1ea3nh"
+            section_id = visual.get("section_id")
+            exam_id = visual.get("exam_id")
+            part = next((item for item in parts
+                         if item["title"] == title
+                         and item.get("section_id") == section_id
+                         and item.get("exam_id") == exam_id), None)
+            if part is None:
+                part = {"id": f"part-image-{len(parts) + 1}", "title": title,
+                        "exam_id": exam_id, "section_id": section_id,
+                        "context": "", "paragraphs": [], "source_pages": [], "questions": []}
+                parts.append(part)
+            label = visual.get("question_label") or f"Question {len(part['questions']) + 1}"
+            source_question_id = visual.get("question_id")
+            existing = next((question for question in part["questions"]
+                             if source_question_id and question.get("source_question_id") == source_question_id),
+                            None)
+            if existing is None and not source_question_id:
+                existing = next((question for question in part["questions"]
+                                 if question["label"] == label), None)
+            if existing:
+                existing["source_pages"] = sorted(set([*existing["source_pages"], page["number"]]))
+                if visual["id"] not in existing["visual_refs"]:
+                    existing["visual_refs"].append(visual["id"])
+                existing["spans_multiple_pages"] = bool(visual.get("spans_multiple_pages"))
+                existing["end_status"] = visual.get("end_status", existing.get("end_status", "unknown"))
+                part["source_pages"] = sorted(set([*part["source_pages"], page["number"]]))
+                continue
+            question_id = f"{part['id']}-question-{len(part['questions']) + 1}"
+            part["source_pages"] = sorted(set([*part["source_pages"], page["number"]]))
+            part["questions"].append({
+                "id": question_id, "source_question_id": source_question_id,
+                "label": label, "points": None, "text": "", "stem": "",
+                "task": "Read the question directly in the attached image.",
+                "materials": "", "context": "", "source_only": False, "ideas": [],
+                "subquestions": [], "paragraphs": [], "source_pages": [page["number"]],
+                "subject_hint": page.get("subject_hint"), "question_type": "open_response",
+                "answer_format": "text", "options": [], "statements": [],
+                "spans_multiple_pages": bool(visual.get("spans_multiple_pages")),
+                "end_status": visual.get("end_status", "unknown"),
+                "confidence": visual.get("confidence"),
+                "warnings": visual.get("warnings", []),
+                "visual_refs": [visual["id"]], "visual_candidates": [], "footnotes": [],
+            })
+
+
 def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> dict:
     """Split an exam conservatively, keeping source references and exclusions."""
     parts = []
@@ -228,6 +342,7 @@ def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> 
     current_part = None
     current_question = None
     current_idea = None
+    current_choice = None
     ended = False
     kept_lines = []
 
@@ -269,6 +384,7 @@ def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> 
             parts.append(current_part)
             current_question = None
             current_idea = None
+            current_choice = None
             continue
         if exam_layout and current_part is not None and current_question is None and _is_source_instruction(stripped):
             continue
@@ -279,20 +395,31 @@ def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> 
                                 "label": f"{question.group(1).capitalize()} {question.group(2)}",
                                 "points": question.group(3),
                                 "_stem": [{"text": question.group(4), "page": line["page"]}],
-                                "_body": [], "ideas": []}
+                                "_body": [], "_choices": [], "ideas": []}
             target["questions"].append(current_question)
             current_idea = None
+            current_choice = None
             continue
         if current_question is not None:
             current_question["_body"].append(line)
+            choice = CHOICE.match(stripped)
+            if choice:
+                current_choice = {"label": choice.group(1),
+                                  "_lines": [{"text": choice.group(2), "page": line["page"]}]}
+                current_question["_choices"].append(current_choice)
+                current_idea = None
+                continue
             idea = IDEA.match(stripped)
             if idea:
+                current_choice = None
                 label = (idea.group(1) or idea.group(2)).lower()
                 current_idea = {"id": f"{current_question['id']}-idea-{len(current_question['ideas']) + 1}",
                                 "label": label, "_lines": [{"text": idea.group(3), "page": line["page"]}]}
                 current_question["ideas"].append(current_idea)
             elif current_idea is not None:
                 current_idea["_lines"].append(line)
+            elif current_choice is not None:
+                current_choice["_lines"].append(line)
             else:
                 current_question["_stem"].append(line)
         elif current_part is not None:
@@ -300,7 +427,9 @@ def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> 
         else:
             global_lines.append(line)
 
-    if not any(part["questions"] for part in parts):
+    has_image_questions = any(visual.get("kind") == "question"
+                              for page in pages or [] for visual in page.get("visuals", []))
+    if not any(part["questions"] for part in parts) and not has_image_questions:
         # No reliable labels: retain the content, flag it, and let the learner edit.
         fallback = [*global_lines]
         for part in parts:
@@ -329,14 +458,33 @@ def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> 
         for question in part["questions"]:
             stem = question.pop("_stem")
             body = question.pop("_body")
+            choices = question.pop("_choices", [])
             question["stem"] = _text(stem)
             question["text"] = _text([*stem[:1], *body])
+            question["options"] = [{"label": choice["label"],
+                                    "text": _text(choice["_lines"]),
+                                    "source_pages": _pages(choice["_lines"])}
+                                   for choice in choices]
+            question["question_type"] = _question_type(part["title"], question)
+            question["answer_format"] = {
+                "multiple_choice": "single_select", "true_false": "true_false_per_statement",
+                "short_answer": "short_text", "essay": "long_text",
+                "open_response": "text",
+            }[question["question_type"]]
             if question.get("source_only") or question["label"] == "Nội dung chưa tách được":
                 question["task"], question["materials"] = "", question["text"]
                 question["source_only"] = True
             else:
                 question["task"], question["materials"] = _split_question_content(part["title"], question["text"])
+                if question["question_type"] in {"multiple_choice", "true_false"}:
+                    question["task"] = question["stem"]
             question["source_pages"] = _pages([*stem, *body])
+            page_subjects = {page["subject_hint"].strip() for page in pages or []
+                             if page["number"] in question["source_pages"]
+                             and isinstance(page.get("subject_hint"), str)
+                             and page["subject_hint"].strip()}
+            if len(page_subjects) == 1:
+                question["subject_hint"] = next(iter(page_subjects))
             question["paragraphs"] = _paragraphs([*stem[:1], *body], question["id"])
             question["source_selection"] = _source_selection(part, question["text"])[1]
             source_text = _source_selection(part, question["text"])[0]
@@ -346,14 +494,21 @@ def structure_text(text: str, pages: list | None = None, mode: str = "auto") -> 
                 idea["text"] = _text(lines)
                 idea["source_pages"] = _pages(lines)
                 idea["context"] = idea_context(global_context, part, question, idea)
+            question["statements"] = ([{"label": idea["label"], "text": idea["text"],
+                                        "source_pages": idea["source_pages"]}
+                                       for idea in question["ideas"]]
+                                      if question["question_type"] == "true_false" else [])
             question["subquestions"] = [idea["label"] for idea in question["ideas"]]
             question["context"] = question_context(global_context, part, question)
 
+    _append_image_questions(parts, pages)
     if excluded:
         warnings.append("Đã tách phần kết thúc/đáp án hoặc đầu-cuối trang lặp lại; xem mục nội dung loại khỏi phiên học.")
+    visuals = _visual_links(parts, pages)
     return {"global_context": global_context,
             "global_paragraphs": _paragraphs(global_lines, "global"),
-            "parts": parts, "footnotes": footnotes, "excluded": excluded, "warnings": warnings}
+            "parts": parts, "visuals": visuals,
+            "footnotes": footnotes, "excluded": excluded, "warnings": warnings}
 
 
 def _source_selection(part: dict, question_text: str) -> tuple[str, str]:
@@ -397,11 +552,15 @@ def question_context(global_context: str, part: dict, question: dict) -> str:
                       for note in question.get("footnotes", []))
     materials = question.get("materials", "").strip()
     task = question.get("task", question["text"]).strip()
+    choices = "\n".join(f"{option['label']}. {option['text']}" for option in question.get("options", []))
+    statements = "\n".join(f"{item['label']}) {item['text']}" for item in question.get("statements", []))
     if question.get("source_only") or question["label"] == "Nội dung chưa tách được":
         return "\n\n".join(value for value in [*_shared_context(global_context, part, question["text"]),
                                              f"Nội dung tài liệu:\n{materials}"] if value)
     return "\n\n".join(value for value in [*_shared_context(global_context, part, question["text"]),
                                       f"{question['label']} — Yêu cầu: {task}",
+                                      f"Các phương án:\n{choices}" if choices else "",
+                                      f"Các mệnh đề:\n{statements}" if statements else "",
                                       f"Ngữ liệu đi kèm:\n{materials}" if materials else "", notes] if value)
 
 

@@ -28,7 +28,7 @@ import { APP_NAME } from "@/lib/brand";
 const studentNav = [
   { to: "/", label: "Tổng quan", icon: LayoutDashboard },
   { to: "/de-bai", label: "Đề bài của tôi", icon: BookOpen },
-  { to: "/phien-hoc", label: "Phiên học Socratic", icon: MessagesSquare },
+  { to: "/phien-hoc", label: "Học cùng AI", icon: MessagesSquare },
   { to: "/tien-trinh", label: "Tiến trình tự học", icon: LineChart },
 ] as const;
 

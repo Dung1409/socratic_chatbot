@@ -53,7 +53,7 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
   await page.reload();
   await expect(page.getByLabel("Bài làm cuối phiên", { exact: true })).toHaveValue(essay);
   await page.getByRole("button", { name: "Hoàn thành & xem báo cáo" }).click();
-  const report = page.getByRole("region", { name: "Báo cáo tư duy cuối phiên" });
+  const report = page.getByRole("region", { name: "Phiếu đánh giá Socratic" });
   await expect(report.getByText("72 / 100", { exact: true })).toBeVisible();
   await expect(report.getByText("Tư duy Khá", { exact: true })).toBeVisible();
   await report.getByText("Xem bằng chứng từ bài làm", { exact: true }).first().click();
@@ -64,7 +64,7 @@ test("adaptive dialogue, counted support, persistent drafts and evidence-backed 
   await expect(page.getByText("72 / 100", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Xem lại bài viết & tiến trình →" }).click();
   await page.getByText("Tư duy Khá · Điểm tư duy 72/100", { exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Báo cáo tư duy cuối phiên" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Phiếu đánh giá Socratic" })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("link", { name: "Xem lại đối thoại", exact: true }).click();
   await expect(page.getByText("72 / 100", { exact: true })).toBeVisible();

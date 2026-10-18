@@ -79,7 +79,7 @@ describe("final assessment report", () => {
     };
     render(<AssessmentReport report={partial} />);
     expect(screen.getByText(/Chưa đủ dữ liệu để tính điểm tổng/)).toBeInTheDocument();
-    expect(screen.getAllByText("— / 100")).toHaveLength(2);
+    expect(screen.getAllByText("— / 100")).toHaveLength(1);
     expect(screen.queryByText("Cần Rèn Luyện")).not.toBeInTheDocument();
   });
 

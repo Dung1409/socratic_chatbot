@@ -7,8 +7,14 @@ import {
   PanelRightClose,
   PanelRightOpen,
   X,
+  ArrowLeft,
+  Save,
 } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
+import { sessionLabel } from "@/lib/learning-state";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -18,11 +24,49 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { type Session } from "@/lib/api";
+import { LessonTabs } from "@/components/lessons/LessonTabs";
 import { LearningPanel } from "./LearningPanel";
 
-type Props = { session: Session; children: ReactNode; composer?: ReactNode; activity?: boolean; onSelectItem?: (itemId: string) => void };
+type Props = {
+  session: Session;
+  children: ReactNode;
+  composer?: ReactNode;
+  activity?: boolean;
+  onSelectItem?: (itemId: string) => void;
+  onSaveDraft?: () => Promise<boolean>;
+  draftStatus?: ReactNode;
+  navigationBusy?: boolean;
+};
 
-export function SessionWorkspace({ session, children, composer, activity = false, onSelectItem }: Props) {
+export function SessionWorkspace({
+  session,
+  children,
+  composer,
+  activity = false,
+  onSelectItem,
+  onSaveDraft,
+  draftStatus,
+  navigationBusy = false,
+}: Props) {
+  const navigate = useNavigate();
+  const [leaving, setLeaving] = useState(false);
+  const siblings = useQuery({
+    queryKey: ["sessions"],
+    queryFn: api.sessions,
+    enabled: (session.assignment.items?.length ?? 0) > 1,
+  });
+  const leave = async (saveFirst = true) => {
+    if (leaving) return;
+    setLeaving(true);
+    try {
+      if (saveFirst && onSaveDraft && !(await onSaveDraft())) return;
+      if (saveFirst && !session.submitted)
+        toast.success("Đã lưu bài học. Em có thể tiếp tục từ Bài học của tôi.");
+      await navigate({ to: "/", search: {} });
+    } finally {
+      setLeaving(false);
+    }
+  };
   const [panelOpen, setPanelOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -92,20 +136,37 @@ export function SessionWorkspace({ session, children, composer, activity = false
       onTabChange={setPanelTab}
     />
   );
-  const status = session.submitted
-    ? "Đã hoàn thành"
-    : session.done
-      ? "Đang tổng hợp"
-      : "Đang đối thoại";
+  const status = session.submitted ? "Đã nộp" : session.done ? "Đang tổng hợp" : "Đang đối thoại";
 
   return (
     <div className="learning-workspace mx-auto flex h-0 min-h-0 min-w-0 flex-1 bg-background">
       <section
         className="flex h-full min-h-0 min-w-0 flex-1 flex-col"
-        aria-label="Không gian đối thoại Socratic"
+        aria-label="Không gian học cùng Trợ lý ảo"
       >
         <header className="learning-session-header shrink-0 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
-            <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-1">
+            <Button
+              variant="ghost"
+              className="h-10 px-1 text-xs sm:text-sm"
+              disabled={leaving || navigationBusy}
+              onClick={() => void leave(false)}
+            >
+              <ArrowLeft aria-hidden="true" /> Bài học của tôi
+            </Button>
+            {!session.submitted && (
+              <Button
+                variant="outline"
+                className="h-10 text-xs sm:text-sm"
+                disabled={leaving || navigationBusy}
+                onClick={() => void leave()}
+              >
+                <Save aria-hidden="true" />
+                {leaving ? "Đang lưu…" : "Lưu và học sau"}
+              </Button>
+            )}
+          </div>
+          <div className="flex min-w-0 items-center justify-between gap-3">
             <div className="min-w-0">
               <h1 className="truncate text-lg font-semibold leading-7" title={assignment.title}>
                 {assignment.title}
@@ -118,7 +179,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
                       ? "Nghị luận xã hội"
                       : taskType === "literary"
                         ? "Nghị luận văn học"
-                      : "Đề tự học"}
+                        : "Đề tự học"}
                   {assignment.grade ? ` · Lớp ${assignment.grade}` : ""}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
@@ -158,7 +219,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
                           ? "Nghị luận xã hội"
                           : taskType === "literary"
                             ? "Nghị luận văn học"
-                          : "Đề tự học"}
+                            : "Đề tự học"}
                       {assignment.grade ? ` · Lớp ${assignment.grade}` : ""}
                     </SheetDescription>
                   </div>
@@ -203,26 +264,53 @@ export function SessionWorkspace({ session, children, composer, activity = false
                 )}
               </Button>
             </div>
-          {assignment.items && assignment.items.length > 1 && onSelectItem && (
-            <label className="mt-3 block max-w-2xl text-xs font-medium text-muted-foreground">
-              Câu đang học
-              <select
-                className="mt-1 block h-10 w-full rounded-md border bg-background px-3 text-sm font-normal text-foreground"
-                value={assignment.active_item_id ?? assignment.items[0]?.id}
-                disabled={activity}
-                onChange={(event) => onSelectItem(event.target.value)}
-              >
-                {assignment.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-              </select>
-            </label>
-          )}
+            {assignment.items && assignment.items.length > 1 && onSelectItem && (
+              <label className="mt-3 block max-w-2xl text-xs font-medium text-muted-foreground">
+                Câu đang học
+                <select
+                  className="mt-1 block h-10 w-full rounded-md border bg-background px-3 text-sm font-normal text-foreground"
+                  value={assignment.active_item_id ?? assignment.items[0]?.id}
+                  disabled={activity}
+                  onChange={(event) => onSelectItem(event.target.value)}
+                >
+                  {assignment.items.map((item) => {
+                    const saved = siblings.data?.find(
+                      (entry) =>
+                        entry.assignment_id === session.assignment_id &&
+                        entry.assignment.active_item_id === item.id,
+                    );
+                    return (
+                      <option key={item.id} value={item.id}>
+                        {item.label} ·{" "}
+                        {item.id === assignment.active_item_id
+                          ? status
+                          : saved
+                            ? sessionLabel(saved)
+                            : "Chưa bắt đầu"}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            )}
           </div>
         </header>
+        <div className="learning-lesson-tabs shrink-0 border-b bg-card px-4 pb-3 sm:px-6">
+          <LessonTabs
+            assignment={assignment}
+            sessions={[
+              session,
+              ...(siblings.data?.filter((entry) => entry.id !== session.id) ?? []),
+            ]}
+            selected="study"
+          />
+        </div>
         <div
           className="relative flex h-0 min-h-0 flex-1 flex-col"
           onWheel={(event) => {
             const element = scroller.current;
-            if (!element || event.deltaY === 0 || element.scrollHeight <= element.clientHeight) return;
+            if (!element || event.deltaY === 0 || element.scrollHeight <= element.clientHeight)
+              return;
             const atTop = element.scrollTop <= 0;
             const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
             if ((event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)) return;
@@ -245,7 +333,7 @@ export function SessionWorkspace({ session, children, composer, activity = false
           >
             <div className="learning-conversation-content mx-auto w-full space-y-6 px-4 py-6 sm:px-6 sm:py-8">
               <p className="text-xs font-medium text-muted-foreground">
-                Đối thoại Socratic{session.tutor_mode !== "openai" ? " · Phiên kịch bản" : ""}
+                Học cùng Trợ lý ảo{session.tutor_mode !== "openai" ? " · Phiên kịch bản" : ""}
               </p>
               {children}
             </div>
@@ -264,6 +352,11 @@ export function SessionWorkspace({ session, children, composer, activity = false
           )}
         </div>
         {composer}
+        {draftStatus && !session.submitted && (
+          <div className="shrink-0 border-t bg-card px-4 py-1 text-xs text-muted-foreground">
+            {draftStatus}
+          </div>
+        )}
         {session.submitted && (
           <footer className="learning-composer shrink-0 border-t bg-card px-4 pt-3 sm:px-6">
             <div className="learning-chat-content mx-auto flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -271,7 +364,9 @@ export function SessionWorkspace({ session, children, composer, activity = false
                 <CheckCircle2 aria-hidden="true" className="size-4" /> Phiên học đã được lưu
               </span>
               <Button asChild variant="link" className="h-10 px-0">
-                <Link to="/tien-trinh">Xem lại bài viết & tiến trình →</Link>
+                <Link to="/" search={{ lesson: session.assignment_id, view: "results" }}>
+                  Xem kết quả bài học
+                </Link>
               </Button>
             </div>
           </footer>

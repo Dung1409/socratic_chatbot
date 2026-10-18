@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, Eye, EyeOff, LoaderCircle, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { APP_NAME } from "@/lib/brand";
+import { safeReturnTo } from "@/lib/auth-redirect";
 import "@/auth.css";
 
 type Values = { name: string; email: string; password: string; confirmation: string };
@@ -55,6 +56,9 @@ function PasswordGuidance({ password }: { password: string }) {
 }
 
 export function AuthForm({ register = false }: { register?: boolean }) {
+  const redirect = useRouterState({
+    select: (state) => safeReturnTo((state.location.search as { redirect?: string }).redirect),
+  });
   const auth = useAuth();
   const [values, setValues] = useState<Values>({
     name: "",
@@ -253,7 +257,7 @@ export function AuthForm({ register = false }: { register?: boolean }) {
         </form>
         <p className="auth-form-footer">
           {register ? "Đã có tài khoản? " : "Chưa có tài khoản? "}
-          <Link to={register ? "/dang-nhap" : "/dang-ky"}>
+          <Link to={register ? "/dang-nhap" : "/dang-ky"} search={{ redirect }}>
             {register ? "Đăng nhập" : "Đăng ký ngay"}
           </Link>
         </p>

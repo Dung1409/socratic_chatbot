@@ -152,11 +152,7 @@ export function LearningPanel({
               <div className="flex justify-between gap-3">
                 <dt>Trạng thái</dt>
                 <dd className="text-right font-medium text-foreground">
-                  {session.submitted
-                    ? "Đã hoàn thành"
-                    : session.done
-                      ? "Đang tổng hợp"
-                      : "Đang đối thoại"}
+                  {session.submitted ? "Đã nộp" : session.done ? "Đang tổng hợp" : "Đang đối thoại"}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">

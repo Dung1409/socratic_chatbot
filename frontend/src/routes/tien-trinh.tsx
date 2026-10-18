@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ResponsiveContainer,
@@ -7,149 +8,179 @@ import {
   PolarAngleAxis,
   PolarRadiusAxis,
   Radar,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
 } from "recharts";
 import { PageHeader, Panel } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { ApiState } from "@/components/ApiState";
 import { seo } from "@/lib/seo";
-import { AssessmentReport } from "@/components/AssessmentReport";
 
 export const Route = createFileRoute("/tien-trinh")({
   head: () =>
-    seo("Tiến trình tự học", "Xem lại phiên học, câu trả lời và bài viết Ngữ văn của bạn."),
+    seo(
+      "Thống kê học tập",
+      "Theo dõi hoạt động học tập tổng hợp. Mở từng bài học để xem báo cáo chi tiết.",
+    ),
   component: Page,
 });
 
 function Page() {
+  const [period, setPeriod] = useState("30");
   const query = useQuery({ queryKey: ["progress"], queryFn: api.progress });
-  if (!query.data)
+  if (query.isPending || query.error)
     return <ApiState loading={query.isPending} error={query.error} retry={query.refetch} />;
-  const { sessions, assignments, bloom_profile: bloomProfile } = query.data;
-  const sessionById = new Map(sessions.map((session) => [session.id, session]));
-  const totalItems = assignments.reduce((total, assignment) => total + assignment.items.length, 0);
-  const completed = assignments.reduce((total, assignment) => total + assignment.items.filter((item) => {
-    const session = item.session_id ? sessionById.get(item.session_id) : null;
-    return session?.submitted && session.assessment?.status === "complete";
-  }).length, 0);
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - Number(period) + 1);
+  const sessions = query.data.sessions.filter(
+    (session) => period === "all" || new Date(session.updated_at) >= cutoff,
+  );
+  const answers = sessions.flatMap((session) =>
+    session.turns.filter(
+      (turn) => turn.kind === "student" && (!turn.purpose || turn.purpose === "answer"),
+    ),
+  );
+  const submitted = sessions.filter((session) => session.submitted).length;
+  const supported = sessions.reduce(
+    (count, session) =>
+      count +
+      (session.tutor_mode === "openai"
+        ? (session.support_events?.filter((event) => event.counted_for_autonomy).length ?? 0)
+        : session.turns.filter((turn) => turn.kind === "hint").length),
+    0,
+  );
+  const bloom = ["Nhớ", "Hiểu", "Vận dụng", "Phân tích", "Đánh giá", "Sáng tạo"].map(
+    (skill, index) => ({
+      skill,
+      value: answers.filter((turn) => "level" in turn && turn.level === index + 1).length,
+    }),
+  );
+  const activity = ["Đang đối thoại", "Đang tổng hợp", "Đã nộp"].map((name, index) => ({
+    name,
+    value: sessions.filter((session) =>
+      index === 2 ? session.submitted : !session.submitted && session.done === (index === 1),
+    ).length,
+  }));
   return (
     <>
       <PageHeader
-        eyebrow="Nhật ký học tập"
-        title="Tiến trình tự học"
-        desc={`${assignments.length} đề/tài liệu · ${completed}/${totalItems} mục có kết quả. Xem lại từng câu và cách lập luận của bạn.`}
+        title="Thống kê học tập"
+        desc="Theo dõi hoạt động tổng hợp; đề bài và kết quả chi tiết nằm trong từng bài học."
+        action={
+          <select
+            aria-label="Khoảng thời gian thống kê"
+            className="assignment-select sm:w-48"
+            value={period}
+            onChange={(event) => setPeriod(event.target.value)}
+          >
+            <option value="7">7 ngày gần đây</option>
+            <option value="30">30 ngày gần đây</option>
+            <option value="90">90 ngày gần đây</option>
+            <option value="all">Toàn bộ thời gian</option>
+          </select>
+        }
       />
-      <div className="p-6 lg:p-10 grid gap-6 xl:grid-cols-2">
-        <Panel title="Số câu đã luyện tập theo bậc Bloom">
-          <div className="h-72">
-            <ResponsiveContainer>
-              <RadarChart data={bloomProfile}>
-                <PolarGrid stroke="var(--border)" />
-                <PolarAngleAxis
-                  dataKey="skill"
-                  tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
-                />
-                <PolarRadiusAxis
-                  domain={[0, Math.max(1, ...bloomProfile.map((point) => point.value))]}
-                  tick={false}
-                  axisLine={false}
-                />
-                <Radar
-                  isAnimationActive={false}
-                  dataKey="value"
-                  stroke="var(--primary)"
-                  fill="var(--primary)"
-                  fillOpacity={0.15}
-                />
-              </RadarChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Biểu đồ đếm câu trả lời theo bậc câu hỏi, không phải điểm năng lực. Điểm đánh giá và
-            bằng chứng được trình bày riêng trong báo cáo mỗi phiên bên dưới.
-          </p>
-        </Panel>
-        <Panel title="Tự đối chiếu sau mỗi phiên">
-          <ul className="space-y-3 text-sm text-foreground/80 list-disc pl-5">
-            <li>Mình đã xác định rõ yêu cầu và luận điểm chính chưa?</li>
-            <li>Dẫn chứng có trong ngữ liệu và hỗ trợ được luận điểm không?</li>
-            <li>Mình đã giải thích mối liên hệ giữa dẫn chứng và nhận định chưa?</li>
-            <li>Có góc nhìn khác hoặc phản biện nào cần xem xét thêm?</li>
-          </ul>
-        </Panel>
-        <div className="xl:col-span-2 space-y-4">
-          <h2 className="font-semibold">Kết quả theo đề và câu hỏi</h2>
-          {assignments.length === 0 ? (
-            <Panel title="Chưa có đề hoặc tài liệu">
-              <p className="text-sm text-muted-foreground mb-4">
-                Thêm đề hoặc tài liệu để bắt đầu và theo dõi kết quả từng câu.
-              </p>
-              <Button asChild>
-                <Link to="/de-bai">Thêm đề tự học</Link>
-              </Button>
-            </Panel>
-          ) : (
-            assignments.map((assignment) => {
-              const available = assignment.items.filter((item) => {
-                const session = item.session_id ? sessionById.get(item.session_id) : null;
-                return session?.submitted && session.assessment?.status === "complete";
-              }).length;
-              return (
-              <Panel
-                key={assignment.id}
-                title={assignment.title}
-                action={
-                  <span className="text-xs text-muted-foreground">
-                    {available}/{assignment.items.length} mục có kết quả
-                  </span>
-                }
+      <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6 lg:p-10">
+        <p className="text-xs text-muted-foreground">
+          Khoảng thời gian được tính theo lần cập nhật gần nhất của từng lượt học. Biểu đồ phản ánh
+          hoạt động, không phải điểm năng lực.
+        </p>
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Số liệu học tập tổng hợp">
+          {[
+            ["Bài có hoạt động", new Set(sessions.map((session) => session.assignment_id)).size],
+            ["Câu đã trả lời", answers.length],
+            ["Câu đã nộp bài", submitted],
+            ["Lượt hỗ trợ", supported],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-xl border bg-card p-4">
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd className="mt-2 text-2xl font-semibold">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        {!sessions.length ? (
+          <section className="rounded-xl border border-dashed p-8 text-center">
+            <h2 className="font-semibold">Chưa có hoạt động trong khoảng đã chọn</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Thử chọn khoảng thời gian khác hoặc mở một bài học để bắt đầu.
+            </p>
+            <Button asChild className="mt-4">
+              <Link to="/" search={{}}>
+                Mở bài học của tôi
+              </Link>
+            </Button>
+          </section>
+        ) : (
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Panel title="Trạng thái các lượt học">
+              <div
+                className="h-72"
+                role="img"
+                aria-label={activity.map((entry) => `${entry.name}: ${entry.value}`).join("; ")}
               >
-                <ol className="space-y-3" aria-label={`Các mục của ${assignment.title}`}>
-                  {assignment.items.map((item) => {
-                    const session = item.session_id ? sessionById.get(item.session_id) : null;
-                    const assessment = session?.submitted ? session.assessment : null;
-                    return (
-                      <li key={item.id} className="rounded-lg border bg-background p-4 sm:p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs text-muted-foreground">{item.source_only ? "Tài liệu không có câu hỏi" : `Câu ${item.order}`}</p>
-                            <h3 className="mt-1 font-semibold">{item.source_only ? "Kết quả tài liệu đầu vào" : item.label}</h3>
-                            {!item.source_only && item.prompt && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.prompt}</p>}
-                          </div>
-                          <span className={`rounded-full px-3 py-1 text-xs font-medium ${assessment?.status === "complete" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
-                            {assessment?.status === "complete" ? `${assessment.score}/100` : "Chưa có kết quả"}
-                          </span>
-                        </div>
-                        {session && !session.submitted && <p className="mt-2 text-xs text-muted-foreground">Đang học · Chưa nộp bài tổng hợp</p>}
-                        {assessment?.status === "insufficient_evidence" && <p className="mt-2 text-xs text-muted-foreground">Đã nộp, nhưng chưa đủ bằng chứng để tính điểm.</p>}
-                        {assessment && (
-                          <details className="mt-3 rounded-md border p-3">
-                            <summary className="cursor-pointer text-sm font-medium text-primary">Xem báo cáo của {item.source_only ? "tài liệu" : "câu này"}</summary>
-                            <div className="mt-3"><AssessmentReport report={assessment} /></div>
-                          </details>
-                        )}
-                        {session?.submitted && session.essay && (
-                          <details className="mt-3 rounded-md border p-3 text-sm">
-                            <summary className="cursor-pointer font-medium">Xem bài tổng hợp</summary>
-                            <p className="mt-3 whitespace-pre-wrap leading-relaxed">{session.essay}</p>
-                          </details>
-                        )}
-                        <Button asChild variant="outline" size="sm" className="mt-3">
-                          {session ? (
-                            <Link to="/phien-hoc" search={{ session: session.id }}>{session.submitted ? "Xem lại phiên học" : "Tiếp tục học"}</Link>
-                          ) : (
-                            <Link to="/phien-hoc" search={{ assignment: assignment.id, item: item.id }}>Bắt đầu học</Link>
-                          )}
-                        </Button>
-                      </li>
-                    );
-                  })}
-                </ol>
-              </Panel>
-              );
-            })
-          )}
-        </div>
+                <ResponsiveContainer>
+                  <BarChart data={activity} margin={{ top: 15, left: -20, right: 10, bottom: 20 }}>
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Bar
+                      dataKey="value"
+                      name="Số lượt học"
+                      fill="var(--primary)"
+                      radius={[5, 5, 0, 0]}
+                      isAnimationActive={false}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+            <Panel title="Câu trả lời theo bậc câu hỏi">
+              {answers.length ? (
+                <div
+                  className="h-72"
+                  role="img"
+                  aria-label={bloom.map((entry) => `${entry.skill}: ${entry.value}`).join("; ")}
+                >
+                  <ResponsiveContainer>
+                    <RadarChart data={bloom}>
+                      <PolarGrid stroke="var(--border)" />
+                      <PolarAngleAxis dataKey="skill" tick={{ fontSize: 12 }} />
+                      <PolarRadiusAxis
+                        domain={[0, Math.max(1, ...bloom.map((entry) => entry.value))]}
+                        tick={false}
+                        axisLine={false}
+                      />
+                      <Radar
+                        dataKey="value"
+                        stroke="var(--primary)"
+                        fill="var(--primary)"
+                        fillOpacity={0.15}
+                        isAnimationActive={false}
+                      />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="py-12 text-center text-sm text-muted-foreground">
+                  Chưa có câu trả lời để hiển thị biểu đồ.
+                </p>
+              )}
+            </Panel>
+          </div>
+        )}
+        <p className="text-sm text-muted-foreground">
+          Để xem bài tổng hợp, bằng chứng và nhận xét, mở phần Kết quả trong bài học tương ứng.
+        </p>
+        <Button asChild variant="outline" className="min-h-11">
+          <Link to="/" search={{}}>
+            Về bài học của tôi
+          </Link>
+        </Button>
       </div>
     </>
   );

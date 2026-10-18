@@ -216,6 +216,9 @@ def test_hint_check_in_keeps_question_and_does_not_become_student_evidence(clien
     assert len(calls) == 3
     reloaded = client.get(f"/api/sessions/{session['id']}").json()
     assert reloaded["support_state"] == session["support_state"]
+    draft_path = f"/api/sessions/{session['id']}/draft"
+    assert client.put(draft_path, json={"answer": "Ý đang viết trước khi chọn chỗ vướng", "essay": "",
+        "revision": 0, "expected_version": session["version"]}).status_code == 200
     body = {"expected_version": session["version"], "client_message_id": "clarify-once", "difficulty": "ideas"}
     path = f"/api/sessions/{session['id']}/hints"
     result = client.post(path, json=body)
@@ -224,6 +227,7 @@ def test_hint_check_in_keeps_question_and_does_not_become_student_evidence(clien
     assert client.post(path, json=body).json() == session
     assert len(calls) == 4 and len(session["support_events"]) == 4
     assert session["turns"][-2]["purpose"] == "clarification"
+    assert client.get(draft_path).json()["answer"] == "Ý đang viết trước khi chọn chỗ vướng"
     assert session["support_state"]["difficulty"] == "ideas"
     assert session["support_state"]["consecutive_hints"] == 1
     assert not session["support_state"]["needs_check_in"]

@@ -2,14 +2,13 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BookOpen,
-  LayoutDashboard,
-  MessagesSquare,
   LineChart,
   Menu,
   GraduationCap,
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/AuthProvider";
@@ -26,17 +25,34 @@ import { toast } from "sonner";
 import { APP_NAME } from "@/lib/brand";
 
 const studentNav = [
-  { to: "/", label: "Tổng quan", icon: LayoutDashboard },
-  { to: "/de-bai", label: "Đề bài của tôi", icon: BookOpen },
-  { to: "/phien-hoc", label: "Phiên học Socratic", icon: MessagesSquare },
-  { to: "/tien-trinh", label: "Tiến trình tự học", icon: LineChart },
+  { to: "/", label: "Bài học của tôi", icon: BookOpen },
+  { to: "/tien-trinh", label: "Thống kê học tập", icon: LineChart },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
-  const learning = path === "/phien-hoc";
+  const search = useRouterState({
+    select: (s) => s.location.search as { session?: string; assignment?: string },
+  });
+  const activePath = path === "/tien-trinh" ? "/tien-trinh" : "/";
+  const learning = path === "/phien-hoc" && Boolean(search.session || search.assignment);
   const [open, setOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("learning:sidebar-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const toggleNavigation = () =>
+    setCollapsed((value) => {
+      try {
+        localStorage.setItem("learning:sidebar-collapsed", String(!value));
+      } catch {
+        /* Layout remains usable. */
+      }
+      return !value;
+    });
   const [signingOut, setSigningOut] = useState(false);
   const app = useRef<HTMLDivElement>(null);
   const auth = useAuth();
@@ -81,15 +97,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   const sidebar = (drawer = false) => {
-    const compact = learning && !drawer;
-    const label = compact ? (collapsed ? "sr-only" : "sr-only xl:not-sr-only") : "";
+    const compact = !drawer;
+    const label = compact && collapsed ? "sr-only" : "";
     return (
       <>
         <div
           className={cn(
             "flex h-24 shrink-0 items-center gap-2.5 border-b px-5",
             compact && "h-[89px] justify-center px-4",
-            compact && !collapsed && "xl:justify-start xl:px-5",
+            compact && !collapsed && "justify-start px-5",
           )}
         >
           <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
@@ -102,12 +118,25 @@ export function AppShell({ children }: { children: ReactNode }) {
             </p>
           </div>
         </div>
+        <div className={cn("shrink-0 px-3 pt-4", compact && collapsed && "px-2")}>
+          <Button asChild className="min-h-11 w-full px-2 shadow-none">
+            <Link
+              to="/de-bai"
+              search={{ tab: "quick" }}
+              aria-label="Thêm bài học"
+              onClick={() => setOpen(false)}
+            >
+              <Plus aria-hidden="true" />
+              <span className={label}>Thêm bài học</span>
+            </Link>
+          </Button>
+        </div>
         <nav
           aria-label="Điều hướng chính"
           className={cn(
             "min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pt-6",
             compact && "px-2",
-            compact && !collapsed && "xl:px-3",
+            compact && !collapsed && "px-3",
           )}
         >
           <p
@@ -125,15 +154,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <Link
                     to={item.to}
                     aria-label={item.label}
-                    aria-current={path === item.to ? "page" : undefined}
+                    aria-current={activePath === item.to ? "page" : undefined}
                     onClick={() => setOpen(false)}
                     className={cn(
                       "flex min-h-12 items-center gap-3 rounded-lg px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-                      path === item.to
+                      activePath === item.to
                         ? "bg-primary-soft font-semibold text-primary"
                         : "text-foreground/75 hover:bg-muted",
                       compact && "justify-center px-0",
-                      compact && !collapsed && "xl:justify-start xl:px-3",
+                      compact && !collapsed && "justify-start px-3",
                     )}
                   >
                     <item.icon
@@ -155,7 +184,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={cn(
             "space-y-3 border-t p-4",
             compact && "px-2",
-            compact && !collapsed && "xl:px-4",
+            compact && !collapsed && "px-4",
           )}
         >
           {compact && (
@@ -165,10 +194,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               aria-label={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
               title={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
               className={cn(
-                "hidden h-10 w-full text-muted-foreground xl:flex",
+                "flex h-11 w-full text-muted-foreground",
                 !collapsed && "justify-start px-2",
               )}
-              onClick={() => setCollapsed((value) => !value)}
+              onClick={toggleNavigation}
             >
               {collapsed ? (
                 <PanelLeftOpen aria-hidden="true" />
@@ -182,7 +211,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             className={cn(
               "flex items-center gap-3",
               compact && "justify-center",
-              compact && !collapsed && "xl:justify-start",
+              compact && !collapsed && "justify-start",
             )}
           >
             <div
@@ -217,8 +246,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div
       ref={app}
       className={cn(
-        "min-h-[100dvh] bg-background",
-        learning && "learning-theme learning-app h-[100dvh] min-h-0 overflow-hidden",
+        "learning-theme min-h-[100dvh] bg-background",
+        learning && "learning-app h-[100dvh] min-h-0 overflow-hidden",
       )}
     >
       <a
@@ -231,21 +260,22 @@ export function AppShell({ children }: { children: ReactNode }) {
         aria-label="Thanh điều hướng"
         className={cn(
           "fixed inset-y-0 left-0 z-40 hidden flex-col border-r bg-sidebar",
-          learning ? (collapsed ? "w-16 md:flex" : "w-16 md:flex xl:w-[232px]") : "w-64 lg:flex",
+          "md:flex",
+          collapsed ? "w-16" : "w-[248px]",
         )}
       >
         {sidebar()}
       </aside>
       <div
         className={cn(
-          learning ? "flex h-full min-h-0 flex-col md:pl-16" : "lg:pl-64",
-          learning && !collapsed && "xl:pl-[232px]",
+          learning && "flex h-full min-h-0 flex-col",
+          collapsed ? "md:pl-16" : "md:pl-[248px]",
         )}
       >
         <header
           className={cn(
             "learning-mobile-header sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-card px-4",
-            learning ? "md:hidden" : "lg:hidden",
+            "md:hidden",
           )}
         >
           <Sheet open={open} onOpenChange={setOpen}>

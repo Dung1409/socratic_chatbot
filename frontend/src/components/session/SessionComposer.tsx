@@ -166,7 +166,7 @@ export function SessionComposer({
         >
           <span>
             {essay
-              ? "Ít nhất 20 ký tự · Bản nháp được giữ trên trình duyệt này."
+              ? "Ít nhất 20 ký tự · Bản nháp tự lưu vào tài khoản khi có kết nối."
               : "Em có thể trả lời theo cách hiểu của mình."}
           </span>
           <span className="hidden sm:inline">Ctrl + Enter để gửi</span>

@@ -611,8 +611,10 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             raise HTTPException(exc.status_code, str(exc)) from exc
         return Response(image, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
 
-    def item_assignment(base, item, items):
+    def item_assignment(base, item, items, document_id=None):
         assignment = dict(base)
+        if document_id:
+            assignment["document_id"] = document_id
         try:
             metadata = item["metadata"]
         except (KeyError, IndexError, TypeError):
@@ -640,18 +642,20 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def start_session(body: SessionInput, user: Principal = Depends(auth.current_user)):
         with db.connect(write=True) as conn:
             assignment = Database.get(conn, "assignments", body.assignment_id, owner_id=user.id)
+            assignment_row = db.execute(conn, "SELECT * FROM assignments WHERE id=? AND owner_id=?",
+                                        (body.assignment_id, user.id)).fetchone()
             # Multi-question assignments live in the relational learning tables, while
             # the existing session UI still calls this legacy endpoint. Build a
             # compatible read model so selecting several questions does not end in 404.
             if assignment is None:
-                row = db.execute(conn, "SELECT * FROM assignments WHERE id=? AND owner_id=?",
-                                 (body.assignment_id, user.id)).fetchone()
+                row = assignment_row
                 if row is not None:
                     items = db.execute(conn, """SELECT id, label, prompt, context, item_type, item_order, metadata_json
                         FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
                                        (body.assignment_id,)).fetchall()
                     assignment = {
                         "id": row["id"], "title": row["title"],
+                        "document_id": row["document_id"],
                         "prompt": "\n\n".join(
                             f"{item['label']}: {item['prompt']}" for item in items),
                         "items": [dict(item) for item in items],
@@ -659,6 +663,10 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                         "target": 4, "status": "Chưa bắt đầu",
                     }
                     Database.put(conn, "assignments", body.assignment_id, assignment, user.id)
+            elif assignment_row is not None and assignment_row["document_id"]:
+                # The relational assignment is authoritative; repair cached legacy
+                # read models that were created before document_id was copied over.
+                assignment["document_id"] = assignment_row["document_id"]
             if assignment is None:
                 raise HTTPException(404, "Không tìm thấy dữ liệu")
             saved = [s for s in saved_sessions(conn, user.id) if s["assignment_id"] == body.assignment_id]
@@ -676,11 +684,17 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
             if existing and ordered_items:
                 selected = next((entry for entry in ordered_items if entry["id"] ==
                                  (existing.get("assignment") or {}).get("active_item_id")), initial_item)
-                existing["assignment"] = item_assignment(existing["assignment"], selected, ordered_items)
+                existing["assignment"] = item_assignment(
+                    existing["assignment"], selected, ordered_items,
+                    assignment_row["document_id"] if assignment_row else None,
+                )
                 existing["assignment"]["_owner_id"] = user.id
                 db.put(conn, "sessions", existing["id"], existing, owner_id=user.id)
             elif ordered_items:
-                assignment = item_assignment(assignment, initial_item, ordered_items)
+                assignment = item_assignment(
+                    assignment, initial_item, ordered_items,
+                    assignment_row["document_id"] if assignment_row else None,
+                )
             if assignment is not None:
                 assignment["_owner_id"] = user.id
         if existing:
@@ -693,7 +707,10 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         with db.connect(write=True) as conn:
             assignment = require(conn, "assignments", body.assignment_id, user.id)
             if ordered_items:
-                assignment = item_assignment(assignment, initial_item, ordered_items)
+                assignment = item_assignment(
+                    assignment, initial_item, ordered_items,
+                    assignment_row["document_id"] if assignment_row else None,
+                )
             # Repeated starts (including a remount or double click) resume the saved session.
             existing = next((s for s in saved_sessions(conn, user.id)
                              if s["assignment_id"] == body.assignment_id and
@@ -718,6 +735,9 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         with db.connect() as conn:
             session = require(conn, "sessions", session_id, user.id)
             assignment_id = session.get("assignment_id")
+            assignment_row = db.execute(conn, "SELECT document_id FROM assignments WHERE id=? AND owner_id=?",
+                                        (assignment_id, user.id)).fetchone()
+            document_id = assignment_row["document_id"] if assignment_row else None
             all_items = db.execute(conn, """SELECT id, label, prompt, context, item_type, metadata_json
                 FROM assignment_items WHERE assignment_id=? ORDER BY item_order""", (assignment_id,)).fetchall()
             item = next((entry for entry in all_items if entry["id"] == body.item_id), None)
@@ -729,12 +749,12 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
         if candidate:
             with db.connect(write=True) as conn:
                 candidate = require(conn, "sessions", candidate["id"], user.id)
-                candidate["assignment"] = item_assignment(candidate["assignment"], item, all_items)
+                candidate["assignment"] = item_assignment(candidate["assignment"], item, all_items, document_id)
                 candidate["updated_at"] = now()
                 db.put(conn, "sessions", candidate["id"], candidate, owner_id=user.id)
             return public_session(adaptive.prepare_item(candidate["id"], user.id)
                                   if candidate.get("tutor_mode") == "openai" else candidate)
-        assignment = item_assignment(session["assignment"], item, all_items)
+        assignment = item_assignment(session["assignment"], item, all_items, document_id)
         if session.get("tutor_mode") == "openai":
             return public_session(adaptive.start(assignment, user.id))
         with db.connect(write=True) as conn:
@@ -796,13 +816,16 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     def prepare_session(session_id: str, user: Principal = Depends(auth.current_user)):
         with db.connect(write=True) as conn:
             session = require(conn, "sessions", session_id, user.id)
+            assignment_row = db.execute(conn, "SELECT document_id FROM assignments WHERE id=? AND owner_id=?",
+                                        (session["assignment_id"], user.id)).fetchone()
+            document_id = assignment_row["document_id"] if assignment_row else None
             items = db.execute(conn, """SELECT id, label, prompt, context, item_type, metadata_json
                 FROM assignment_items WHERE assignment_id=? ORDER BY item_order""",
                                (session["assignment_id"],)).fetchall()
             if items:
                 active_id = (session.get("assignment") or {}).get("active_item_id") or items[0]["id"]
                 item = next((entry for entry in items if entry["id"] == active_id), items[0])
-                assignment = item_assignment(session["assignment"], item, items)
+                assignment = item_assignment(session["assignment"], item, items, document_id)
                 if session["assignment"] != assignment:
                     session["assignment"] = assignment
                     db.put(conn, "sessions", session_id, session, owner_id=user.id)

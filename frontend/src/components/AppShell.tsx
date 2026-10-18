@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
+import { APP_NAME } from "@/lib/brand";
 
 const studentNav = [
   { to: "/", label: "Tổng quan", icon: LayoutDashboard },
@@ -94,12 +95,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
             <GraduationCap aria-hidden="true" className="size-[18px]" />
           </div>
-          <div className={cn("leading-tight", label)}>
-            <p className="text-sm font-semibold">
-              Socra<span className="text-primary">Văn</span>
-            </p>
-            <p className="mt-1 whitespace-nowrap text-[10px] text-muted-foreground">
-              Gia sư AI · Socratic × Bloom
+          <div className={cn("min-w-0 leading-tight", label)}>
+            <p className="text-sm font-semibold">{APP_NAME}</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+              Phát triển năng lực tư duy
             </p>
           </div>
         </div>
@@ -262,14 +261,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 learning && "learning-theme",
               )}
             >
-              <SheetTitle className="sr-only">Menu SocraVăn</SheetTitle>
+              <SheetTitle className="sr-only">Menu {APP_NAME}</SheetTitle>
               <SheetDescription className="sr-only">Điều hướng không gian tự học</SheetDescription>
               {sidebar(true)}
             </SheetContent>
           </Sheet>
-          <p className="text-sm font-semibold">
-            Socra<span className="text-primary">Văn</span>
-          </p>
+          <p className="text-sm font-semibold">{APP_NAME}</p>
         </header>
         <main
           id="main-content"

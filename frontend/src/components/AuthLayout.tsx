@@ -1,17 +1,18 @@
 import type { ReactNode } from "react";
 import { GraduationCap, MessageCircle, UserRound, CornerDownRight } from "lucide-react";
+import { APP_TAGLINE, APP_TITLE } from "@/lib/brand";
 
 function Brand() {
   return (
-    <div className="auth-brand" aria-label="SocraVăn, không gian tự học Ngữ văn">
+    <div className="auth-brand" aria-label={APP_TITLE}>
       <span className="auth-brand-mark">
         <GraduationCap size={25} aria-hidden="true" />
       </span>
       <div>
         <p className="auth-wordmark">
-          Socra<span>Văn</span>
+          Trợ lý ảo <span>AI</span>
         </p>
-        <p className="auth-brand-caption">Không gian tự học Ngữ văn</p>
+        <p className="auth-brand-caption">{APP_TAGLINE}</p>
       </div>
     </div>
   );

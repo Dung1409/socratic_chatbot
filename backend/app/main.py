@@ -83,7 +83,7 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                            "Authentication IP limits are shared per peer; email, global and user limits remain active.")
         yield
 
-    app = FastAPI(title="SocraVăn API", version="0.1.0", lifespan=lifespan,
+    app = FastAPI(title="Trợ lý ảo AI API", version="0.1.0", lifespan=lifespan,
                   description="Đối thoại Socratic thích ứng cho đọc hiểu/nghị luận xã hội; đánh giá Bloom và mức tự lực.")
     app.state.db = db
     app.state.queue = queue

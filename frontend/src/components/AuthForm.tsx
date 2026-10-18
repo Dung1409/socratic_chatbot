@@ -8,6 +8,7 @@ import { AuthLayout } from "@/components/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
+import { APP_NAME } from "@/lib/brand";
 import "@/auth.css";
 
 type Values = { name: string; email: string; password: string; confirmation: string };
@@ -101,7 +102,7 @@ export function AuthForm({ register = false }: { register?: boolean }) {
       if (register) {
         await auth.register(values.name.trim(), values.email.trim(), values.password);
         toast.success("Tạo tài khoản thành công", {
-          description: "Chào mừng bạn đến với không gian tự học SocraVăn.",
+          description: `Chào mừng bạn đến với ${APP_NAME}.`,
         });
       } else await auth.login(values.email.trim(), values.password);
       setValues((previous) => ({ ...previous, password: "", confirmation: "" }));
@@ -194,7 +195,7 @@ export function AuthForm({ register = false }: { register?: boolean }) {
       <div className="auth-form-content" key={register ? "register" : "login"}>
         <header className="auth-form-header">
           <h1 id="auth-form-heading">
-            {register ? "Bắt đầu hành trình học cùng SocraVăn" : "Chào mừng bạn trở lại"}
+            {register ? `Bắt đầu hành trình học cùng ${APP_NAME}` : "Chào mừng bạn trở lại"}
           </h1>
           <p>
             {register

@@ -180,7 +180,7 @@ test("assignment modal validates, preserves drafts, saves without starting, and 
     await expect(create).toBeFocused();
     if (width < 1024) {
       await page.getByRole("button", { name: "Mở menu" }).click();
-      await expect(page.getByRole("dialog", { name: "Menu SocraVăn" })).toBeVisible();
+      await expect(page.getByRole("dialog", { name: "Menu Trợ lý ảo AI" })).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page.getByRole("button", { name: "Mở menu" })).toBeFocused();
     }

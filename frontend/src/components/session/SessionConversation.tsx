@@ -2,6 +2,7 @@ import { BookOpen, GraduationCap, Info, Lightbulb } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { BLOOM } from "@/lib/data";
 import { type Session } from "@/lib/api";
+import { APP_NAME } from "@/lib/brand";
 
 const hintNames = ["Định hướng", "Câu hỏi phụ", "Khung trả lời"];
 const strategies: Record<string, string> = {
@@ -105,7 +106,7 @@ export function SessionConversation({ session }: { session: Session }) {
                       {hint ? (
                         <Lightbulb aria-hidden="true" className="size-4 text-muted-foreground" />
                       ) : (
-                        <span className="text-sm font-semibold">Gia sư SocraVăn</span>
+                        <span className="text-sm font-semibold">{APP_NAME}</span>
                       )}
                       <span className="text-xs font-medium text-muted-foreground">{label}</span>
                       {turn.kind === "tutor" &&

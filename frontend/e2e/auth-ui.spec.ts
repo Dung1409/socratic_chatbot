@@ -13,9 +13,19 @@ test("auth layouts fit desktop, tablet and mobile with accessible touch targets"
     await page.setViewportSize(size);
     for (const route of ["/dang-nhap", "/dang-ky"]) {
       await page.goto(route);
+      await expect(page).toHaveTitle(
+        `${route === "/dang-ky" ? "Đăng ký" : "Đăng nhập"} · Trợ lý ảo AI – giải pháp phát triển năng lực tư duy cho học sinh`,
+      );
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      const brand = page.locator(".auth-brand:visible");
+      await expect(brand).toHaveAccessibleName(
+        "Trợ lý ảo AI – giải pháp phát triển năng lực tư duy cho học sinh",
+      );
+      expect(await brand.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
         true,
       );
       const email = page.getByRole("textbox", { name: "Email", exact: true });
@@ -134,6 +144,27 @@ test("real registration accepts eight characters, blocks repeat submit and repor
   await expect(
     page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
   ).toBeVisible();
+  for (const width of [320, 390, 768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    if (width < 1024) {
+      await page.getByRole("button", { name: "Mở menu" }).click();
+      const menu = page.getByRole("dialog", { name: "Menu Trợ lý ảo AI", exact: true });
+      await expect(menu).toBeVisible();
+      await expect(menu.getByText("Trợ lý ảo AI", { exact: true })).toBeVisible();
+      expect(await menu.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true,
+      );
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("button", { name: "Mở menu" })).toBeFocused();
+    } else {
+      await expect(
+        page.getByRole("complementary").getByText("Trợ lý ảo AI", { exact: true }),
+      ).toBeVisible();
+    }
+  }
   await page.getByRole("button", { name: "Đăng xuất", exact: true }).click();
   await page.getByRole("link", { name: "Đăng ký ngay", exact: true }).click();
   await page.getByLabel("Tên hiển thị", { exact: true }).fill("Tài khoản trùng");

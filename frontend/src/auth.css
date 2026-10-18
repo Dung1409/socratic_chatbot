@@ -30,9 +30,13 @@
   place-items: center;
   width: 44px;
   height: 44px;
+  flex-shrink: 0;
   border-radius: 12px;
   background: var(--auth-primary);
   color: white;
+}
+.auth-brand > div {
+  min-width: 0;
 }
 .auth-wordmark {
   font-size: 23px;
@@ -46,6 +50,7 @@
 .auth-brand-caption {
   margin-top: 3px;
   font-size: 11px;
+  line-height: 1.6;
   color: var(--auth-muted);
 }
 .auth-intro-content {

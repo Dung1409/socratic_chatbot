@@ -460,6 +460,8 @@ function DocumentWorkspace({
             part_id: part.id,
             question_id: question.id,
             points: question.points,
+            visual_refs: question.visual_refs ?? [],
+            visual_candidates: question.visual_candidates ?? [],
             source_only: isSourceOnly(question),
           },
         }));

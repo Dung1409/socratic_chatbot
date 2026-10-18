@@ -103,20 +103,40 @@ export function AppShell({ children }: { children: ReactNode }) {
       <>
         <div
           className={cn(
-            "flex h-24 shrink-0 items-center gap-2.5 border-b px-5",
-            compact && "h-[89px] justify-center px-4",
-            compact && !collapsed && "justify-start px-5",
+            "flex shrink-0 items-center gap-2.5 border-b px-5",
+            compact ? "h-28 justify-between gap-2 pl-5 pr-0" : "h-24",
+            compact && collapsed && "gap-0 pl-1",
           )}
         >
           <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
             <GraduationCap aria-hidden="true" className="size-[18px]" />
           </div>
           <div className={cn("min-w-0 leading-tight", label)}>
-            <p className="text-sm font-semibold">{APP_NAME}</p>
-            <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+            <p className="text-lg font-semibold leading-6">{APP_NAME}</p>
+            <p className="mt-1 text-xs leading-4 text-muted-foreground">
               Phát triển năng lực tư duy
             </p>
           </div>
+          {compact && (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
+              title={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
+              className={cn(
+                "shrink-0 rounded-r-none border border-r-0 bg-sidebar text-muted-foreground shadow-none",
+                collapsed ? "size-7" : "size-11",
+              )}
+              onClick={toggleNavigation}
+            >
+              {collapsed ? (
+                <PanelLeftOpen aria-hidden="true" />
+              ) : (
+                <PanelLeftClose aria-hidden="true" />
+              )}
+            </Button>
+          )}
         </div>
         <div className={cn("shrink-0 px-3 pt-4", compact && collapsed && "px-2")}>
           <Button asChild className="min-h-11 w-full px-2 shadow-none">
@@ -131,55 +151,57 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           </Button>
         </div>
-        <nav
-          aria-label="Điều hướng chính"
-          className={cn(
-            "min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pt-6",
-            compact && "px-2",
-            compact && !collapsed && "px-3",
-          )}
-        >
-          <p
+        <div className="relative flex min-h-0 flex-1">
+          <nav
+            aria-label="Điều hướng chính"
             className={cn(
-              "mb-3 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground",
-              label,
+              "min-h-0 flex-1 space-y-2 overflow-y-auto px-4 pt-6",
+              compact && "px-2",
+              compact && !collapsed && "px-3",
             )}
           >
-            Không gian tự học
-          </p>
-          <TooltipProvider delayDuration={300}>
-            {studentNav.map((item) => (
-              <Tooltip key={item.to}>
-                <TooltipTrigger asChild>
-                  <Link
-                    to={item.to}
-                    aria-label={item.label}
-                    aria-current={activePath === item.to ? "page" : undefined}
-                    onClick={() => setOpen(false)}
-                    className={cn(
-                      "flex min-h-12 items-center gap-3 rounded-lg px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
-                      activePath === item.to
-                        ? "bg-primary-soft font-semibold text-primary"
-                        : "text-foreground/75 hover:bg-muted",
-                      compact && "justify-center px-0",
-                      compact && !collapsed && "justify-start px-3",
-                    )}
-                  >
-                    <item.icon
-                      aria-hidden="true"
-                      className="size-[18px] shrink-0"
-                      strokeWidth={1.75}
-                    />
-                    <span className={label}>{item.label}</span>
-                  </Link>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="bg-foreground text-white">
-                  {item.label}
-                </TooltipContent>
-              </Tooltip>
-            ))}
-          </TooltipProvider>
-        </nav>
+            <p
+              className={cn(
+                "mb-3 min-h-11 px-3 pt-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground",
+                label,
+              )}
+            >
+              Không gian tự học
+            </p>
+            <TooltipProvider delayDuration={300}>
+              {studentNav.map((item) => (
+                <Tooltip key={item.to}>
+                  <TooltipTrigger asChild>
+                    <Link
+                      to={item.to}
+                      aria-label={item.label}
+                      aria-current={activePath === item.to ? "page" : undefined}
+                      onClick={() => setOpen(false)}
+                      className={cn(
+                        "flex min-h-12 items-center gap-3 rounded-lg px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                        activePath === item.to
+                          ? "bg-primary-soft font-semibold text-primary"
+                          : "text-foreground/75 hover:bg-muted",
+                        compact && "justify-center px-0",
+                        compact && !collapsed && "justify-start px-3",
+                      )}
+                    >
+                      <item.icon
+                        aria-hidden="true"
+                        className="size-[18px] shrink-0"
+                        strokeWidth={1.75}
+                      />
+                      <span className={label}>{item.label}</span>
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="bg-foreground text-white">
+                    {item.label}
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+            </TooltipProvider>
+          </nav>
+        </div>
         <div
           className={cn(
             "space-y-3 border-t p-4",
@@ -187,26 +209,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             compact && !collapsed && "px-4",
           )}
         >
-          {compact && (
-            <Button
-              variant="ghost"
-              aria-expanded={!collapsed}
-              aria-label={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
-              title={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
-              className={cn(
-                "flex h-11 w-full text-muted-foreground",
-                !collapsed && "justify-start px-2",
-              )}
-              onClick={toggleNavigation}
-            >
-              {collapsed ? (
-                <PanelLeftOpen aria-hidden="true" />
-              ) : (
-                <PanelLeftClose aria-hidden="true" />
-              )}
-              <span className={label}>Thu gọn điều hướng</span>
-            </Button>
-          )}
           <div
             className={cn(
               "flex items-center gap-3",
@@ -296,7 +298,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               {sidebar(true)}
             </SheetContent>
           </Sheet>
-          <p className="text-sm font-semibold">{APP_NAME}</p>
+          <p className="text-base font-semibold">{APP_NAME}</p>
         </header>
         <main
           id="main-content"
@@ -322,7 +324,7 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col md:flex-row md:items-end gap-4 justify-between px-6 lg:px-10 pt-8 pb-6 border-b bg-card">
+    <div className="flex flex-col md:min-h-28 md:flex-row md:items-end gap-4 justify-between px-6 lg:px-10 py-4 border-b bg-card">
       <div>
         {eyebrow && (
           <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-1.5">

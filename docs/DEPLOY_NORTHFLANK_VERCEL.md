@@ -64,7 +64,7 @@ sequence cần thiết. Nếu tách role, bảo đảm quyền trên bảng/sequ
 | TUTOR_MODE | openai |
 | OPENAI_API_KEY | Project key riêng, chỉ cấp cho API |
 | OPENAI_TUTOR_MODEL / OPENAI_ASSESSMENT_MODEL | gpt-6.1-sol / gpt-6.1-sol, model hiện có trong source |
-| DOCUMENT_AI_PROVIDER / DOCUMENT_AI_MODEL | openai / gpt-5-mini để đọc và sắp xếp nội dung ảnh, PDF, tài liệu; dùng cùng OPENAI_API_KEY |
+| DOCUMENT_AI_MODEL | gpt-6.1-sol để đọc và sắp xếp nội dung ảnh, PDF, tài liệu; dùng cùng OPENAI_API_KEY |
 | AI_REQUESTS_PER_HOUR | 60 mặc định, theo tài khoản; điều chỉnh theo ngân sách/quota |
 | UPLOADS_PER_HOUR | 20 mặc định, theo tài khoản |
 | BACKGROUND_JOBS | true |

@@ -8,7 +8,6 @@ from backend.app import document_ai, extraction
 
 
 def test_openai_is_default_document_provider(monkeypatch):
-    monkeypatch.delenv("DOCUMENT_AI_PROVIDER", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     seen = []
 
@@ -27,8 +26,11 @@ def test_openai_is_default_document_provider(monkeypatch):
 
 
 def test_openai_receives_uploaded_image(monkeypatch):
-    monkeypatch.delenv("DOCUMENT_AI_PROVIDER", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("backend.app.visual_layout.analyze_question_document", lambda _pages: {
+        "subject_group": "literature", "subject_hint": "Ngữ văn", "subject_uncertain": False,
+        "pages": {1: {"questions": []}}, "unresolved_regions": [],
+    })
     seen = []
 
     def fake_request(batch):

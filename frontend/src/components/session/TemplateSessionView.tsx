@@ -94,7 +94,6 @@ export function TemplateSessionView({
       activity={busy}
       navigationBusy={busy && busyAction === null}
       onSaveDraft={busy ? async () => true : draftState.save}
-      draftStatus={draftState.feedback}
       onSelectItem={(itemId) => {
         if (busy || itemId === session.assignment.active_item_id) return;
         setBusy(true);
@@ -177,7 +176,9 @@ export function TemplateSessionView({
           {submitted && (
             <details className="mt-4 text-sm">
               <summary className="cursor-pointer font-medium">Bài viết cuối phiên</summary>
-              <p className="mt-3 whitespace-pre-wrap break-words leading-7">{session.essay}</p>
+              <p className="mt-2 whitespace-pre-wrap break-words leading-7">
+                {session.essay || "Không có nội dung bài viết được lưu."}
+              </p>
             </details>
           )}
         </section>

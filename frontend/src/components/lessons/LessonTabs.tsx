@@ -12,10 +12,14 @@ export function LessonTabs({
   selected: "assignment" | "study" | "results";
 }) {
   const destination = lessonState(assignment, sessions).search;
+  const hasResults = sessions.some((session) => session.submitted && session.assessment);
   const style = (active: boolean) =>
-    `flex min-h-11 items-center justify-center rounded-lg border px-3 py-2 text-center text-xs sm:text-sm ${active ? "border-primary bg-primary-soft font-semibold text-primary" : "bg-card text-muted-foreground hover:text-primary"}`;
+    `flex min-h-9 items-center justify-center rounded-md border px-3 py-1.5 text-center text-xs sm:text-sm ${active ? "border-primary bg-primary-soft font-semibold text-primary" : "bg-card text-muted-foreground hover:text-primary"}`;
   return (
-    <nav aria-label="Nội dung bài học" className="grid grid-cols-3 gap-2">
+    <nav
+      aria-label="Nội dung bài học"
+      className={`grid gap-2 ${hasResults ? "grid-cols-3" : "grid-cols-2"}`}
+    >
       <Link
         to="/"
         search={{ lesson: assignment.id, view: "assignment" }}
@@ -32,14 +36,16 @@ export function LessonTabs({
       >
         Học cùng Trợ lý ảo
       </Link>
-      <Link
-        to="/"
-        search={{ lesson: assignment.id, view: "results" }}
-        aria-current={selected === "results" ? "page" : undefined}
-        className={style(selected === "results")}
-      >
-        Kết quả
-      </Link>
+      {hasResults && (
+        <Link
+          to="/"
+          search={{ lesson: assignment.id, view: "results" }}
+          aria-current={selected === "results" ? "page" : undefined}
+          className={style(selected === "results")}
+        >
+          Kết quả
+        </Link>
+      )}
     </nav>
   );
 }

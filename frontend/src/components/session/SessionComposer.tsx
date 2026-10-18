@@ -43,18 +43,18 @@ export function SessionComposer({
     const element = input.current;
     if (!element) return;
     element.style.height = "0px";
-    element.style.height = `${Math.min(Math.max(element.scrollHeight, 96), 200)}px`;
+    element.style.height = `${Math.min(Math.max(element.scrollHeight, 56), 128)}px`;
   }, [value, mode]);
 
   return (
     <div
-      className="learning-composer shrink-0 border-t bg-card px-4 pt-3 sm:px-6 sm:pt-4"
+      className="learning-composer shrink-0 border-t bg-card px-4 pt-2 sm:px-6"
       aria-label={essay ? "Soạn bài làm cuối phiên" : "Soạn câu trả lời"}
     >
-      <div className="learning-chat-content mx-auto w-full">
+      <div className="learning-composer-content mx-auto w-full">
         {notice}
-        <div className="learning-composer-labels mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <label htmlFor="learning-answer" className="text-sm font-medium">
+        <div className="learning-composer-labels mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-0">
+          <label htmlFor="learning-answer" className="text-sm font-medium leading-5">
             {essay ? "Câu trả lời cuối phiên" : "Suy nghĩ của em"}
           </label>
           {onFinish && (
@@ -62,7 +62,7 @@ export function SessionComposer({
               type="button"
               variant="ghost"
               disabled={disabled}
-              className="h-9 px-2 text-xs text-muted-foreground"
+              className="h-8 px-2 text-xs text-muted-foreground"
               onClick={onFinish}
             >
               Kết thúc đối thoại & tổng hợp <ArrowRight aria-hidden="true" />
@@ -76,9 +76,11 @@ export function SessionComposer({
             value={value}
             disabled={disabled}
             maxLength={essay ? 50000 : 10000}
-            placeholder={essay ? "Trình bày kết quả và cách em suy luận…" : "Viết suy nghĩ của em tại đây..."}
+            placeholder={
+              essay ? "Trình bày kết quả và cách em suy luận…" : "Viết suy nghĩ của em tại đây..."
+            }
             aria-describedby="learning-composer-help"
-            className="learning-composer-input min-h-24 max-h-[200px] resize-none rounded-lg border-0 px-3 py-2.5 leading-relaxed shadow-none focus-visible:ring-0"
+            className="learning-composer-input min-h-14 max-h-32 resize-none rounded-lg border-0 px-3 py-1.5 leading-5 shadow-none focus-visible:ring-0"
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={(event) => {
               if (
@@ -94,8 +96,8 @@ export function SessionComposer({
           <div
             className={
               essay
-                ? "flex flex-col gap-2 px-2 pb-2 pt-1 sm:flex-row sm:items-center sm:justify-between"
-                : "flex items-center justify-between gap-2 px-2 pb-2 pt-1"
+                ? "flex flex-col gap-1 px-2 pb-1 pt-0.5 sm:flex-row sm:items-center sm:justify-between"
+                : "flex items-center justify-between gap-2 px-2 pb-1 pt-0.5"
             }
           >
             <div
@@ -107,7 +109,7 @@ export function SessionComposer({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="h-10 gap-2 px-2.5 text-muted-foreground"
+                  className="h-8 gap-2 px-2.5 text-muted-foreground"
                   disabled={disabled || hintDisabled}
                   onClick={onHint}
                   title={hintDescription}
@@ -125,7 +127,7 @@ export function SessionComposer({
                 <Button
                   type="button"
                   variant="ghost"
-                  className="h-10 w-full px-2 text-xs sm:w-auto sm:text-sm"
+                  className="h-8 w-full px-2 text-xs sm:w-auto sm:text-sm"
                   disabled={disabled}
                   onClick={onContinue}
                 >
@@ -142,8 +144,8 @@ export function SessionComposer({
               type="button"
               className={
                 essay
-                  ? "learning-primary h-11 w-full shrink-0 shadow-none sm:w-auto"
-                  : "learning-primary h-11 shrink-0 shadow-none"
+                  ? "learning-primary h-9 w-full shrink-0 shadow-none sm:w-auto"
+                  : "learning-primary h-9 shrink-0 shadow-none"
               }
               size={essay ? "default" : "icon"}
               disabled={!canSend}
@@ -162,7 +164,7 @@ export function SessionComposer({
         </div>
         <div
           id="learning-composer-help"
-          className="learning-composer-help mt-2 flex flex-wrap justify-between gap-1 text-xs leading-5 text-muted-foreground"
+          className="learning-composer-help mt-1 flex flex-wrap justify-between gap-1 text-xs leading-4 text-muted-foreground"
         >
           <span>
             {essay

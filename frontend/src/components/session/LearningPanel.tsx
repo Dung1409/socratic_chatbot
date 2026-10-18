@@ -3,6 +3,7 @@ import { Check, ChevronRight, Info, MessageSquare, Lightbulb } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { type Session } from "@/lib/api";
+import { sessionLabel } from "@/lib/learning-state";
 import { BLOOM } from "@/lib/data";
 import { getLearningHistory } from "./learning-history";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,14 +11,20 @@ import { AssignmentPanel } from "./AssignmentPanel";
 
 export function LearningPanel({
   session,
+  sessions,
   onJump,
   onViewAssignment,
+  onSelectItem,
+  navigationBusy,
   tab,
   onTabChange,
 }: {
   session: Session;
+  sessions: Session[];
   onJump: (index: number) => void;
   onViewAssignment: () => void;
+  onSelectItem?: (itemId: string) => void;
+  navigationBusy: boolean;
   tab: "assignment" | "journey";
   onTabChange: (tab: "assignment" | "journey") => void;
 }) {
@@ -41,8 +48,40 @@ export function LearningPanel({
       onValueChange={(value) => onTabChange(value === "journey" ? "journey" : "assignment")}
       className="flex h-full min-h-0 flex-col"
     >
-      <div className="shrink-0 border-b px-5 py-3">
-        <TabsList aria-label="Nội dung thông tin học tập" className="grid h-11 w-full grid-cols-2">
+      {session.assignment.items && session.assignment.items.length > 1 && onSelectItem && (
+        <div className="shrink-0 border-b px-4 py-3">
+          <label className="block text-xs font-medium text-muted-foreground">
+            Câu đang học
+            <select
+              aria-label="Câu đang học"
+              className="mt-1 block h-10 w-full rounded-md border bg-background px-3 text-sm font-normal text-foreground"
+              value={session.assignment.active_item_id ?? session.assignment.items[0]?.id}
+              disabled={navigationBusy}
+              onChange={(event) => onSelectItem(event.target.value)}
+            >
+              {session.assignment.items.map((item) => {
+                const saved = sessions.find(
+                  (entry) =>
+                    entry.assignment_id === session.assignment_id &&
+                    entry.assignment.active_item_id === item.id,
+                );
+                return (
+                  <option key={item.id} value={item.id}>
+                    {item.label} ·{" "}
+                    {item.id === session.assignment.active_item_id
+                      ? "Đang chọn"
+                      : saved
+                        ? sessionLabel(saved)
+                        : "Chưa bắt đầu"}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+        </div>
+      )}
+      <div className="shrink-0 border-b px-4 py-2">
+        <TabsList aria-label="Nội dung thông tin học tập" className="grid h-10 w-full grid-cols-2">
           <TabsTrigger
             value="assignment"
             className="h-full data-[state=active]:bg-card data-[state=active]:text-primary data-[state=active]:shadow-none"

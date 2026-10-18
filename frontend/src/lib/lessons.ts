@@ -9,6 +9,13 @@ export const lessonFilters = [
   ["submitted", "Đã nộp"],
 ] as const;
 
+export function readableLessonTitle(title: string): string {
+  const value = title.trim();
+  if (!/^[\p{L}\p{N}]+(?:[-_][\p{L}\p{N}]+){3,}$/u.test(value)) return title;
+  const words = value.replace(/[-_]+/g, " ");
+  return words.charAt(0).toLocaleUpperCase("vi-VN") + words.slice(1);
+}
+
 export function lessonSessions(assignment: Assignment, sessions: Session[]) {
   const latest = new Map<string, Session>();
   for (const session of sessions

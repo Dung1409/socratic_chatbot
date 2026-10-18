@@ -147,7 +147,6 @@ export function AdaptiveSessionView({
       activity={blocked}
       navigationBusy={busy && busyAction === null}
       onSaveDraft={busy || pending ? async () => true : draftState.save}
-      draftStatus={draftState.feedback}
       onSelectItem={(itemId) => void selectItem(itemId)}
       composer={
         !session.submitted ? (
@@ -226,7 +225,7 @@ export function AdaptiveSessionView({
         </section>
       )}
       {session.submitted && (
-        <details data-session-complete className="rounded-xl border bg-card p-4 text-sm">
+        <details className="rounded-xl border bg-card p-4 text-sm">
           <summary className="cursor-pointer font-medium">Câu trả lời cuối phiên</summary>
           <p className="mt-3 whitespace-pre-wrap break-words leading-7">{session.essay}</p>
         </details>

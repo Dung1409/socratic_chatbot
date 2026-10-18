@@ -209,32 +209,58 @@
 }
 
 .learning-workspace {
-  --learning-chat-width: 820px;
+  --learning-chat-width: 520px;
   width: 100%;
 }
 
+.lesson-workspace {
+  --learning-chat-width: 520px;
+  min-height: calc(100dvh - 56px);
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .lesson-workspace {
+    min-height: 100dvh;
+  }
+}
+
 .learning-chat-content {
-  max-width: var(--learning-chat-width);
+  max-width: min(100%, 760px);
+}
+
+.learning-composer-content {
+  max-width: min(100%, 760px);
 }
 
 .learning-conversation-content {
-  max-width: calc(var(--learning-chat-width) + 48px);
+  max-width: min(100%, 808px);
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1100px) {
   .learning-workspace {
     max-width: 1360px;
     column-gap: 24px;
   }
 
   .learning-panel {
-    width: clamp(340px, 24vw, 360px);
+    width: clamp(320px, 24vw, 360px);
   }
 }
 
 @media (min-width: 1600px) {
-  .learning-workspace {
-    --learning-chat-width: 860px;
+  .learning-workspace,
+  .lesson-workspace {
+    --learning-chat-width: 600px;
+  }
+
+  .learning-chat-content,
+  .learning-composer-content {
+    max-width: min(100%, 800px);
+  }
+
+  .learning-conversation-content {
+    max-width: min(100%, 848px);
   }
 
   .learning-panel {
@@ -248,7 +274,7 @@
 }
 
 .learning-composer {
-  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
 }
 
 .learning-composer-input {
@@ -277,6 +303,7 @@
 }
 
 .learning-app[data-compact-height="true"] .learning-session-header {
+  min-height: 56px;
   padding-block: 8px;
 }
 
@@ -324,16 +351,4 @@
 .learning-app[data-compact-height="true"] .learning-composer-input {
   min-height: 40px;
   max-height: 64px;
-}
-
-.learning-app[data-compact-height="true"] .learning-session-header > div:nth-child(2) {
-  display: none;
-}
-.learning-app[data-compact-height="true"] .learning-session-header > div:first-child {
-  margin-bottom: 0;
-}
-
-/* Keep the active lesson visible while the phone keyboard is open. */
-.learning-app[data-compact-height="true"] .learning-lesson-tabs {
-  display: none;
 }

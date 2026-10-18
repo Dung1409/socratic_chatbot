@@ -12,8 +12,6 @@ def auth_settings(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     # Child parser processes inherit these values and must not load local API keys.
     monkeypatch.setenv("OPENAI_API_KEY", "")
-    monkeypatch.setenv("GG_API_KEY", "")
-    monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.setenv("TRUST_PROXY_HEADERS", "false")
     monkeypatch.setenv("AI_REQUESTS_PER_HOUR", "1000")
     monkeypatch.setenv("UPLOADS_PER_HOUR", "1000")

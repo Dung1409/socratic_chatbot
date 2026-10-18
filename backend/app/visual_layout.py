@@ -11,7 +11,7 @@ import os
 import time
 from urllib.request import Request, urlopen
 
-from . import document_ai, gemini
+from . import document_ai
 
 logger = logging.getLogger(__name__)
 
@@ -205,21 +205,6 @@ def _request_openai(image: bytes, nearby_text: str) -> dict:
     return json.loads(raw or "{}")
 
 
-def _request_gemini(image: bytes, nearby_text: str) -> dict:
-    from .config import positive_integer
-
-    body = json.dumps({"contents": [{"role": "user", "parts": [
-        {"text": PROMPT + "\nNearby text:\n" + nearby_text[:2500]},
-        {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(image).decode("ascii")}},
-    ]}], "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}).encode("utf-8")
-    key = os.getenv("GG_API_KEY") or os.getenv("GEMINI_API_KEY")
-    request = Request(gemini.API_URL, data=body, headers={"X-goog-api-key": key,
-                      "Content-Type": "application/json"}, method="POST")
-    with urlopen(request, timeout=positive_integer("DOCUMENT_AI_TIMEOUT_SECONDS", 60)) as response:
-        payload = json.load(response)
-    return json.loads("".join(part.get("text", "") for part in payload["candidates"][0]["content"]["parts"]))
-
-
 def _normalized(payload: dict, page_number: int, source_id: str, source: str) -> list[dict]:
     regions = payload.get("regions")
     if not isinstance(regions, list):
@@ -251,8 +236,7 @@ def analyze(image: bytes, nearby_text: str, page_number: int, source_id: str,
             source: str = "page") -> list[dict]:
     """Return validated candidate regions; provider failures are handled by caller."""
     started = time.perf_counter()
-    request = _request_openai if document_ai.provider() == "openai" else _request_gemini
-    regions = _normalized(request(image, nearby_text), page_number, source_id, source)
+    regions = _normalized(_request_openai(image, nearby_text), page_number, source_id, source)
     logger.info("Visual analysis completed page=%d source_id=%s regions=%d duration_ms=%d",
                 page_number, source_id, len(regions), round((time.perf_counter() - started) * 1000))
     return regions
@@ -276,43 +260,24 @@ def analyze_question_document(page_images: list[dict]) -> dict:
     request_timeout = max(positive_integer("DOCUMENT_AI_TIMEOUT_SECONDS", 60),
                           min(240, 45 + 7 * len(parts)))
 
-    if document_ai.provider() == "openai":
-        content = [{"type": "input_text", "text": QUESTION_PROMPT + "\n\n" + page_context}]
-        for item in parts:
-            content.extend([
-                {"type": "input_text", "text": f"Image for page {item['page']}"},
-                {"type": "input_image", "detail": "high", "image_url":
-                 "data:image/jpeg;base64," + base64.b64encode(item["image"]).decode("ascii")},
-            ])
-        body = json.dumps({"model": os.getenv("DOCUMENT_AI_MODEL", "gpt-6.1-sol"),
-                           "input": [{"role": "user", "content": content}],
-                           "text": {"format": {"type": "json_object"}}}).encode("utf-8")
-        request = Request("https://api.openai.com/v1/responses", data=body,
-                          headers={"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY", ""),
-                                   "Content-Type": "application/json"}, method="POST")
-        with urlopen(request, timeout=request_timeout) as response:
-            payload = json.load(response)
-        raw = payload.get("output_text") or "".join(
-            item.get("text", "") for output in payload.get("output", [])
-            for item in output.get("content", []) if isinstance(item, dict))
-    else:
-        provider_parts = [{"text": QUESTION_PROMPT + "\n\n" + page_context}]
-        for item in parts:
-            provider_parts.extend([
-                {"text": f"Image for page {item['page']}"},
-                {"inline_data": {"mime_type": "image/jpeg",
-                                 "data": base64.b64encode(item["image"]).decode("ascii")}},
-            ])
-        body = json.dumps({"contents": [{"role": "user", "parts": provider_parts}],
-                           "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}},
-                          ensure_ascii=False).encode("utf-8")
-        key = os.getenv("GG_API_KEY") or os.getenv("GEMINI_API_KEY")
-        request = Request(gemini.API_URL, data=body,
-                          headers={"X-goog-api-key": key, "Content-Type": "application/json"},
-                          method="POST")
-        with urlopen(request, timeout=request_timeout) as response:
-            payload = json.load(response)
-        raw = "".join(part.get("text", "") for part in payload["candidates"][0]["content"]["parts"])
+    content = [{"type": "input_text", "text": QUESTION_PROMPT + "\n\n" + page_context}]
+    for item in parts:
+        content.extend([
+            {"type": "input_text", "text": f"Image for page {item['page']}"},
+            {"type": "input_image", "detail": "high", "image_url":
+             "data:image/jpeg;base64," + base64.b64encode(item["image"]).decode("ascii")},
+        ])
+    body = json.dumps({"model": os.getenv("DOCUMENT_AI_MODEL", "gpt-6.1-sol"),
+                       "input": [{"role": "user", "content": content}],
+                       "text": {"format": {"type": "json_object"}}}).encode("utf-8")
+    request = Request("https://api.openai.com/v1/responses", data=body,
+                      headers={"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY", ""),
+                               "Content-Type": "application/json"}, method="POST")
+    with urlopen(request, timeout=request_timeout) as response:
+        payload = json.load(response)
+    raw = payload.get("output_text") or "".join(
+        item.get("text", "") for output in payload.get("output", [])
+        for item in output.get("content", []) if isinstance(item, dict))
 
     result = json.loads(raw or "{}")
     group = result.get("subject_group")

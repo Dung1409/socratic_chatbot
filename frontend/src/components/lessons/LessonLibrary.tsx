@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, FileText, Plus } from "lucide-react";
 import { api } from "@/lib/api";
-import { lessonFilters, lessonState, unassignedDocuments, type LessonFilter } from "@/lib/lessons";
+import { lessonFilters, lessonState, readableLessonTitle, unassignedDocuments, type LessonFilter } from "@/lib/lessons";
 import { learningDate, taskLabel } from "@/lib/learning-state";
 import { PageHeader } from "@/components/AppShell";
 import { ApiState } from "@/components/ApiState";
@@ -123,7 +123,7 @@ export function LessonLibrary({
                           ? "Cần xử lý lại"
                           : "Cần kiểm tra nội dung"}
                     </p>
-                    <h2 className="break-words font-semibold">{doc.title}</h2>
+                    <h2 className="break-words font-semibold">{readableLessonTitle(doc.title)}</h2>
                     <p className="mt-2 break-words text-sm text-muted-foreground">
                       {doc.filename}
                       {doc.question_count ? ` · ${doc.question_count} câu` : ""}
@@ -161,7 +161,7 @@ export function LessonLibrary({
                           search={{ lesson: assignment.id, view: "assignment" }}
                           className="hover:text-primary"
                         >
-                          {assignment.title}
+                          {readableLessonTitle(assignment.title)}
                         </Link>
                       </h2>
                       {assignment.prompt?.trim() !== assignment.title.trim() && (
@@ -180,13 +180,18 @@ export function LessonLibrary({
                       className="min-h-11"
                       variant={state === "submitted" ? "outline" : "default"}
                     >
-                      {state === "submitted" ? (
+                      {state === "submitted" &&
+                      saved.some((session) => session.submitted && session.assessment) ? (
                         <Link to="/" search={{ lesson: assignment.id, view: "results" }}>
                           Xem kết quả
                         </Link>
                       ) : (
                         <Link to="/phien-hoc" search={destination}>
-                          {state === "new" ? "Bắt đầu học" : "Tiếp tục học"}
+                          {state === "new"
+                            ? "Bắt đầu học"
+                            : state === "submitted"
+                              ? "Mở bài học"
+                              : "Tiếp tục học"}
                         </Link>
                       )}
                     </Button>

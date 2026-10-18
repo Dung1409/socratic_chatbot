@@ -47,6 +47,11 @@ def require(conn, collection, identifier, owner_id):
 def public_session(session):
     result = {key: value for key, value in session.items()
             if key not in {"requests", "rubric", "review", "student_id", "student_name", "class_name"}}
+    # The tutor needs the owner internally to load protected image bytes, but
+    # this routing value must never be exposed to the browser.
+    if isinstance(result.get("assignment"), dict) and "_owner_id" in result["assignment"]:
+        result["assignment"] = {key: value for key, value in result["assignment"].items()
+                                if key != "_owner_id"}
     if session.get("tutor_mode") == "openai":
         result["pending_action"] = public_pending(session.get("pending_action"))
         result["support_state"] = support_context(session)
@@ -63,7 +68,41 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
     background_jobs = config.boolean("BACKGROUND_JOBS", False)
     queue = JobQueue(db, storage_path or config.storage_path())
     auth = AuthService(db)
-    tutor = tutor_engine or OpenAITutor()
+
+    def load_assignment_images(assignment):
+        """Load only the selected question's protected visual sources for the tutor."""
+        if not isinstance(assignment, dict):
+            return []
+        document_id = assignment.get("document_id")
+        owner_id = assignment.get("_owner_id")
+        refs = [*assignment.get("visual_refs", []), *assignment.get("visual_candidates", [])]
+        if not document_id or not owner_id or not refs:
+            return []
+        document = queue.document(document_id, owner_id=owner_id)
+        original = queue.original(document_id, owner_id)
+        if not document or not original:
+            return []
+        visuals = {item.get("id"): item for item in (document.get("structure") or {}).get("visuals", [])}
+        sources = {source.get("source_id"): source
+                   for page in document.get("pages", []) for source in page.get("visual_sources", [])}
+        images = []
+        for ref in dict.fromkeys(refs):
+            visual = visuals.get(ref)
+            if not visual:
+                continue
+            source = sources.get(visual.get("source_id"))
+            if not source:
+                continue
+            try:
+                images.append(render_visual_source(original[1], original[0].read_bytes(),
+                                                   int(visual["page"]), source, visual.get("bbox")))
+            except (OSError, ValueError, KeyError, ExtractionError):
+                logger.warning("Could not load tutor visual source=%s", ref)
+            if len(images) >= 3:
+                break
+        return images
+
+    tutor = tutor_engine or OpenAITutor(visual_loader=load_assignment_images)
     tutor_mode = os.getenv("TUTOR_MODE", "openai")
     if tutor_mode not in ("openai", "template"):
         raise ValueError("TUTOR_MODE must be openai or template")
@@ -638,9 +677,12 @@ def create_app(database_path: str | None = None, frontend_dist: Path | None = No
                 selected = next((entry for entry in ordered_items if entry["id"] ==
                                  (existing.get("assignment") or {}).get("active_item_id")), initial_item)
                 existing["assignment"] = item_assignment(existing["assignment"], selected, ordered_items)
+                existing["assignment"]["_owner_id"] = user.id
                 db.put(conn, "sessions", existing["id"], existing, owner_id=user.id)
             elif ordered_items:
                 assignment = item_assignment(assignment, initial_item, ordered_items)
+            if assignment is not None:
+                assignment["_owner_id"] = user.id
         if existing:
             return public_session(adaptive.prepare_item(existing["id"], user.id)
                                   if existing.get("tutor_mode") == "openai" else existing)

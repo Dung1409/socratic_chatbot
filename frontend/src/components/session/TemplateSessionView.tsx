@@ -4,7 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type Session as SavedSession } from "@/lib/api";
-import { useAuth } from "@/components/AuthProvider";
+import { useSessionDraft } from "@/hooks/use-session-draft";
 import { SessionWorkspace } from "./SessionWorkspace";
 import { SessionConversation } from "./SessionConversation";
 import { SessionComposer } from "./SessionComposer";
@@ -21,13 +21,10 @@ export function TemplateSessionView({
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const draftKey = `socratic:${user?.id}:draft:${session.id}`;
-  const essayKey = `socratic:${user?.id}:essay:${session.id}`;
   const { done, submitted } = session;
   const hintTier = session.hint_tier;
-  const [draft, setDraft] = useState(() => sessionStorage.getItem(draftKey) || "");
-  const [essay, setEssay] = useState(() => sessionStorage.getItem(essayKey) || session.essay);
+  const draftState = useSessionDraft(session);
+  const { draft, essay, setDraft, setEssay } = draftState;
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<"message" | "hint" | "submit" | null>(null);
   const [error, setError] = useState("");
@@ -50,24 +47,22 @@ export function TemplateSessionView({
     setBusyAction(type);
     setError("");
     try {
+      if (!(await draftState.save())) return;
       const saved =
         type === "message"
           ? await api.message(action.session, text, action.key)
           : type === "hint"
             ? await api.hint(action.session, action.key)
             : await api.submit(action.session, text, action.key);
+      draftState.committed(saved, type);
       client.setQueryData(queryKey, saved);
       client.setQueriesData<SavedSession>({ queryKey: ["session"] }, (current) =>
         current?.id === saved.id ? saved : current,
       );
       pending.current = null;
-      if (type === "message") {
-        setDraft("");
-        sessionStorage.removeItem(draftKey);
-      }
       if (type === "submit") {
-        sessionStorage.removeItem(essayKey);
         toast.success("Đã lưu bài viết và hoàn thành phiên tự học");
+        await navigate({ to: "/", search: { lesson: session.assignment_id, view: "results" } });
       }
       void client.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "session" });
     } catch (error) {
@@ -97,15 +92,25 @@ export function TemplateSessionView({
     <SessionWorkspace
       session={session}
       activity={busy}
+      navigationBusy={busy && busyAction === null}
+      onSaveDraft={busy ? async () => true : draftState.save}
+      draftStatus={draftState.feedback}
       onSelectItem={(itemId) => {
         if (busy || itemId === session.assignment.active_item_id) return;
         setBusy(true);
-        void api.selectSessionItem(session.id, itemId)
+        void draftState
+          .save()
+          .then((saved) => {
+            if (!saved) throw new Error("Hãy lưu bản nháp trước khi chuyển câu.");
+            return api.selectSessionItem(session.id, itemId);
+          })
           .then(async (selected) => {
             client.setQueryData(["session", selected.id], selected);
             await navigate({ to: "/phien-hoc", search: { session: selected.id } });
           })
-          .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Không chuyển được câu hỏi"))
+          .catch((error: unknown) =>
+            toast.error(error instanceof Error ? error.message : "Không chuyển được câu hỏi"),
+          )
           .finally(() => setBusy(false));
       }}
       composer={
@@ -116,13 +121,11 @@ export function TemplateSessionView({
             onChange={(value) => {
               if (done) {
                 setEssay(value);
-                sessionStorage.setItem(essayKey, value);
               } else {
                 setDraft(value);
-                sessionStorage.setItem(draftKey, value);
               }
             }}
-            disabled={busy}
+            disabled={busy || !draftState.ready || draftState.hasConflict}
             busy={busyAction === (done ? "submit" : "message")}
             sendLabel={done ? "Lưu bài viết & hoàn thành" : "Gửi câu trả lời"}
             onSend={() => void perform(done ? "submit" : "message")}
@@ -141,7 +144,7 @@ export function TemplateSessionView({
               error ? (
                 <SessionRequestError
                   message={error}
-                  disabled={busy}
+                  disabled={busy || !draftState.ready || draftState.hasConflict}
                   onRetry={() => void perform(failedAction)}
                 />
               ) : undefined
@@ -155,7 +158,7 @@ export function TemplateSessionView({
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 aria-hidden="true" className="size-4 animate-spin" />
           {busyAction === "hint"
-            ? "Gia sư đang chuẩn bị gợi ý…"
+            ? "Trợ lý đang chuẩn bị gợi ý…"
             : busyAction === "submit"
               ? "Đang lưu bài viết…"
               : "Đang lưu câu trả lời…"}

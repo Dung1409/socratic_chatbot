@@ -11,7 +11,7 @@ export type Assignment = {
   excerpt?: string;
   status: string;
   progress: number;
-  task_type?: "reading" | "social" | "literary" | "other";
+  task_type?: "reading" | "social" | "literary" | "mixed" | "other";
   source_text?: string;
   visual_refs?: string[];
   items?: AssignmentItem[];
@@ -25,6 +25,7 @@ export type AssignmentItem = {
   item_type?: "reading" | "social" | "literary" | "other";
 };
 export type Step = { level: number; q: string; hints: string[] };
+export type HintDifficulty = "understanding" | "ideas" | "expression";
 export type Turn = (
   | { kind: "tutor"; step: number; text: string; level: number }
   | { kind: "hint"; step: number; tier: number; text: string }
@@ -38,7 +39,7 @@ export type Turn = (
     }
 ) & {
   id?: string;
-  purpose?: "source" | "answer";
+  purpose?: "source" | "answer" | "clarification";
   response_kind?: "question" | "support" | "source_request" | "ready";
   objective?: string;
   strategy?: string;
@@ -82,6 +83,14 @@ export type Session = {
   submitted_at?: string;
   tutor_mode: string;
   current_objective?: string;
+  support_state?: {
+    question_id: string | null;
+    question_text: string;
+    objective: string;
+    consecutive_hints: number;
+    needs_check_in: boolean;
+    difficulty: HintDifficulty | null;
+  };
   plan?: { summary: string; objectives: string[]; task_type: "reading" | "social" | "literary" };
   support_events?: {
     id: string;
@@ -96,6 +105,7 @@ export type Session = {
     text: string;
     client_message_id: string;
     status: "processing" | "failed";
+    difficulty?: HintDifficulty | null;
   } | null;
 };
 export type Dashboard = {
@@ -105,6 +115,13 @@ export type Dashboard = {
   hints_per_answer: number;
   submitted: number;
   latest_session: Session | null;
+};
+
+export type SessionDraft = {
+  answer: string;
+  essay: string;
+  revision: number;
+  updated_at: string | null;
 };
 export type Progress = {
   bloom_profile: { skill: string; value: number }[];
@@ -507,8 +524,15 @@ export const api = {
   progress: () => request<Progress>("/progress"),
   sessions: () => request<Session[]>("/sessions"),
   session: (id: string) => request<Session>(`/sessions/${id}`),
+  sessionDraft: (id: string) => request<SessionDraft>(`/sessions/${id}/draft`),
+  saveSessionDraft: (
+    id: string,
+    body: { answer: string; essay: string; revision: number; expected_version: number },
+  ) =>
+    request<SessionDraft>(`/sessions/${id}/draft`, { method: "PUT", body: JSON.stringify(body) }),
   prepareSession: (id: string) => post<Session>(`/sessions/${id}/prepare`, {}),
-  start: (id: string) => post<Session>("/sessions", { assignment_id: id }),
+  start: (id: string, item?: string) =>
+    post<Session>("/sessions", { assignment_id: id, ...(item ? { item_id: item } : {}) }),
   selectSessionItem: (sessionId: string, itemId: string) =>
     post<Session>(`/sessions/${sessionId}/select-item`, { item_id: itemId }),
   message: (session: Session, text: string, key: string) =>
@@ -517,10 +541,11 @@ export const api = {
       expected_version: session.version,
       client_message_id: key,
     }),
-  hint: (session: Session, key: string) =>
+  hint: (session: Session, key: string, difficulty?: HintDifficulty) =>
     post<Session>(`/sessions/${session.id}/hints`, {
       expected_version: session.version,
       client_message_id: key,
+      ...(difficulty ? { difficulty } : {}),
     }),
   submit: (session: Session, essay: string, key: string) =>
     post<Session>(`/sessions/${session.id}/submit`, {

@@ -11,8 +11,9 @@ from fastapi import HTTPException
 from .ai_tutor import POLICY_VERSION, TutorError
 from .assessment import SCORING_VERSION, build_report
 from .db import Database
+from .support import DIFFICULTIES, support_context
 
-LEASE_SECONDS = 120
+LEASE_SECONDS = 180  # Generation and semantic review each have a 60-second provider timeout.
 
 
 def timestamp():
@@ -32,11 +33,14 @@ def public_pending(pending):
     status = pending["status"]
     if status == "processing" and pending["lease_until"] <= time.time():
         status = "failed"
-    return {key: pending[key] for key in ("action", "text", "client_message_id")} | {"status": status}
+    return {key: pending[key] for key in ("action", "text", "client_message_id")} | {
+        "status": status, "difficulty": pending.get("difficulty"),
+    }
 
 
 def response_turn(reply, session, requested=False):
     support = reply.kind == "support"
+    anchor = support_context(session)
     if support != bool(reply.support_reason):
         raise TutorError("AI chưa phân loại hỗ trợ hợp lệ. Em hãy thử lại.")
     if requested and reply.kind not in ("support", "source_request"):
@@ -49,17 +53,21 @@ def response_turn(reply, session, requested=False):
             "strategy": reply.strategy, "objective": reply.objective,
             "created_at": timestamp()}
     if support:
+        # Support may simplify the task, but cannot replace its objective.
+        turn["question_id"] = anchor["question_id"]
+        turn["objective"] = anchor["objective"]
         turn["tier"] = session.get("hint_tier", 0) + 1
         session["hint_tier"] = turn["tier"]
         session["support_events"].append({
             "id": str(uuid4()), "turn_id": turn["id"], "reason": reply.support_reason,
             "origin": "requested" if requested else "adaptive",
+            "question_id": anchor["question_id"], "objective": anchor["objective"],
             "counted_for_autonomy": True, "delivered_at": turn["created_at"],
         })
     else:
         session["hint_tier"] = 0
     session["turns"].append(turn)
-    session["current_objective"] = reply.objective
+    session["current_objective"] = turn["objective"]
     if reply.kind == "ready":
         session["done"] = True
 
@@ -126,7 +134,7 @@ class AdaptiveSessions:
         return refreshed
 
     def mutate(self, session_id, body, action, owner_id):
-        fingerprint = hashlib.sha256(json.dumps({"action": action, **body.model_dump()}, sort_keys=True).encode()).hexdigest()
+        fingerprint = hashlib.sha256(json.dumps({"action": action, **body.model_dump(exclude_none=True)}, sort_keys=True).encode()).hexdigest()
         token = str(uuid4())
         with self.db.connect(write=True) as conn:
             session = require_session(self.db, conn, session_id, owner_id)
@@ -161,11 +169,15 @@ class AdaptiveSessions:
                 if action in ("finish", "continue"):
                     session["done"] = action == "finish"
                 elif action in ("message", "hint", "submit"):
+                    difficulty = getattr(body, "difficulty", None)
+                    if action == "hint" and support_context(session)["needs_check_in"] and not difficulty:
+                        raise HTTPException(409, "Em hãy chọn chỗ đang vướng hoặc thử trả lời trước khi nhận thêm gợi ý.")
                     if action == "message" and len(answers) >= 40:
                         raise HTTPException(409, "Phiên đã có 40 câu trả lời. Hãy kết thúc đối thoại và tổng hợp bài làm.")
                     session["pending_action"] = {
                         "client_message_id": body.client_message_id, "fingerprint": fingerprint,
                         "action": action, "text": getattr(body, "text", getattr(body, "essay", "")),
+                        "difficulty": difficulty,
                         "status": "processing", "lease_until": time.time() + LEASE_SECONDS, "token": token,
                     }
                     self.db.put(conn, "sessions", session_id, session, owner_id=owner_id)
@@ -181,8 +193,17 @@ class AdaptiveSessions:
             if action == "submit":
                 draft = self.tutor.assess(working, body.essay)
                 report = build_report(draft, working, body.essay, working["assessment_model"])
-                working.update(essay=body.essay, submitted=True, submitted_at=timestamp(), assessment=report)
+                working.update(essay=body.essay, submitted=True, submitted_at=timestamp(), assessment=report,
+                               scoring_version=report["scoring_version"])
             else:
+                if action == "hint" and getattr(body, "difficulty", None):
+                    working["turns"].append({
+                        "id": str(uuid4()), "kind": "student", "step": 0,
+                        "text": DIFFICULTIES[body.difficulty], "purpose": "clarification",
+                        "difficulty": body.difficulty, "created_at": timestamp(),
+                        "level": working["turns"][-1]["level"],
+                        "hints": working["hint_tier"], "quality": None,
+                    })
                 if action == "message":
                     previous_turn = working["turns"][-1]
                     working["turns"].append({
@@ -190,6 +211,7 @@ class AdaptiveSessions:
                         "purpose": "source" if previous_turn.get("response_kind") == "source_request" else "answer",
                         "level": previous_turn["level"], "hints": working["hint_tier"],
                         "quality": None, "created_at": timestamp(),
+                        "question_id": support_context(working)["question_id"],
                     })
                 reply = self.tutor.reply(working, action)
                 response_turn(reply, working, requested=action == "hint")

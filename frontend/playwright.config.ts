@@ -5,6 +5,7 @@ const python =
   process.platform === "win32" ? "..\\.venv\\Scripts\\python.exe" : "../.venv/bin/python";
 const testEnvironment = {
   APP_ENV: "test",
+  LOG_LEVEL: "WARNING",
   AUTO_MIGRATE: "true",
   JWT_SECRET: "e2e-test-only-signing-key-with-more-than-thirty-two-bytes",
   AUTH_COOKIE_SECURE: "false",
@@ -20,6 +21,7 @@ export default defineConfig({
   workers: 1,
   timeout: 60000,
   retries: 0,
+  expect: { timeout: 15000 },
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:8011",

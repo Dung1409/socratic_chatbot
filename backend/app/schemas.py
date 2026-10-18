@@ -50,6 +50,14 @@ class SessionItemStatusInput(Input):
     status: Literal["pending", "active", "completed", "skipped"]
 
 
+class SessionDraftInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    answer: str = Field(default="", max_length=10000)
+    essay: str = Field(default="", max_length=50000)
+    revision: int = Field(ge=0)
+    expected_version: int = Field(ge=0)
+
+
 class SourcePageInput(Input):
     number: int = Field(ge=1, le=30)
     label: str = Field(min_length=1, max_length=100)
@@ -165,6 +173,7 @@ class QuickTaskInput(Input):
 
 class SessionInput(Input):
     assignment_id: str = Field(min_length=1, max_length=100)
+    item_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class SessionSelectItemInput(Input):
@@ -174,6 +183,10 @@ class SessionSelectItemInput(Input):
 class ActionInput(Input):
     client_message_id: str = Field(min_length=1, max_length=100)
     expected_version: int = Field(ge=0)
+
+
+class HintInput(ActionInput):
+    difficulty: Literal["understanding", "ideas", "expression"] | None = None
 
 
 class MessageInput(ActionInput):

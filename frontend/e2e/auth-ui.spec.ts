@@ -141,15 +141,13 @@ test("real registration accepts eight characters, blocks repeat submit and repor
   }
   expect((await registered).status()).toBe(201);
   await expect(page.getByText("Tạo tài khoản thành công", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bài học của tôi" })).toBeVisible();
   for (const width of [320, 390, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    if (width < 1024) {
+    if (width < 768) {
       await page.getByRole("button", { name: "Mở menu" }).click();
       const menu = page.getByRole("dialog", { name: "Menu Trợ lý ảo AI", exact: true });
       await expect(menu).toBeVisible();

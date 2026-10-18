@@ -29,7 +29,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
             Mỗi câu hỏi mở ra <span>một cách nghĩ mới.</span>
           </h2>
           <p className="auth-description">
-            Cùng gia sư AI khám phá tác phẩm, rèn luyện lập luận và phát triển tư duy phản biện qua
+            Cùng Trợ lý ảo khám phá tác phẩm, rèn luyện lập luận và phát triển tư duy phản biện qua
             những cuộc đối thoại gợi mở.
           </p>
           <figure className="auth-conversation">
@@ -45,7 +45,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
                   <GraduationCap size={17} aria-hidden="true" />
                 </span>
                 <div>
-                  <p className="auth-speaker">Gia sư AI</p>
+                  <p className="auth-speaker">Trợ lý ảo</p>
                   <p>Em nghĩ điều gì khiến nhân vật đưa ra quyết định ấy?</p>
                 </div>
               </div>
@@ -63,7 +63,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
                   <GraduationCap size={17} aria-hidden="true" />
                 </span>
                 <div>
-                  <p className="auth-speaker">Gia sư AI</p>
+                  <p className="auth-speaker">Trợ lý ảo</p>
                   <p>
                     Đó là một nhận xét thú vị. Em có thể tìm chi tiết trong tác phẩm để làm rõ suy
                     nghĩ đó không?

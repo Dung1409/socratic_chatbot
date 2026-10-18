@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { type Session } from "@/lib/api";
+import { taskLabel } from "@/lib/learning-state";
 import { cn } from "@/lib/utils";
 
 export function AssignmentPanel({
@@ -40,11 +41,7 @@ export function AssignmentPanel({
         <h3 className="text-sm font-medium text-muted-foreground">Đề bài của em</h3>
         <p className="mt-2 break-words text-lg font-semibold leading-7">{assignment.title}</p>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {taskType === "reading"
-            ? "Đọc hiểu"
-            : taskType === "social"
-              ? "Nghị luận xã hội"
-              : "Đề tự học"}
+          {taskLabel(taskType)}
           {assignment.grade ? ` · Lớp ${assignment.grade}` : ""}
         </p>
         {imageOnlyQuestion && (
@@ -83,7 +80,7 @@ export function AssignmentPanel({
             onClick={onViewAssignment}
           >
             <Maximize2 aria-hidden="true" />
-            Mở khung đọc
+            Xem đề bài
           </Button>
         </div>
       </section>

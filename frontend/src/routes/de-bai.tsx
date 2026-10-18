@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -28,7 +28,6 @@ import {
   sourceParagraphListClass,
   splitProseParagraphs,
 } from "@/lib/text-layout";
-import { ApiState } from "@/components/ApiState";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -43,11 +42,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { QuickTaskEntry } from "@/components/QuickTaskEntry";
 
 export const Route = createFileRoute("/de-bai")({
-  head: () =>
-    seo(
-      "Tài liệu của tôi",
-      "Tải đề bài hoặc tài liệu học tập và bắt đầu học cùng trợ lý AI.",
-    ),
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab?: "quick" | "documents"; document?: string } => ({
+    ...(search["tab"] === "quick" || search["tab"] === "documents" ? { tab: search["tab"] } : {}),
+    ...(typeof search["document"] === "string" ? { document: search["document"] } : {}),
+  }),
+  head: () => seo("Thêm bài học", "Nhập đề hoặc tải tài liệu, kiểm tra nội dung và lưu bài học."),
   component: Page,
 });
 
@@ -56,36 +57,41 @@ const IMAGE_TYPES = /\.(png|jpe?g|webp)$/i;
 type ImageItem = { id: string; file: File; preview: string };
 
 function Page() {
-  const { user } = useAuth();
-  const tabKey = `socratic:${user?.id}:input-tab`;
-  const [tab, setTab] = useState(() => {
-    try {
-      return sessionStorage.getItem(tabKey) === "documents" ? "documents" : "quick";
-    } catch {
-      return "quick";
-    }
-  });
+  const search = Route.useSearch();
+  const navigate = useNavigate();
+  const tab = search.tab ?? (search.document ? "documents" : "quick");
   const changeTab = (value: string) => {
-    setTab(value);
-    try {
-      sessionStorage.setItem(tabKey, value);
-    } catch {
-      /* The selected tab still works. */
-    }
+    void navigate({
+      to: "/de-bai",
+      search:
+        value === "documents"
+          ? { tab: "documents", ...(search.document ? { document: search.document } : {}) }
+          : { tab: "quick" },
+      replace: true,
+    });
   };
   return (
     <>
+      <div className="border-b bg-card px-4 pt-3 sm:px-6">
+        <Button asChild variant="link" className="min-h-11 px-0">
+          <Link to="/" search={{}}>
+            ← Bài học của tôi
+          </Link>
+        </Button>
+      </div>
       <PageHeader
-        eyebrow="Học sinh"
-        title="Bắt đầu phiên học"
-        desc="Nhập một đề để học ngay, hoặc tải tài liệu để chọn nội dung em muốn học."
+        title="Thêm bài học"
+        desc="Nhập đề hoặc tải tài liệu. Kiểm tra nội dung rồi lưu để học sau hoặc bắt đầu học."
       />
       <Tabs
         value={tab}
         onValueChange={changeTab}
         className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6 lg:p-10"
       >
-        <TabsList aria-label="Cách nhập đề" className="grid h-auto w-full grid-cols-2 sm:max-w-md">
+        <TabsList
+          aria-label="Cách thêm bài học"
+          className="grid h-auto w-full grid-cols-2 sm:max-w-xl"
+        >
           <TabsTrigger value="quick" className="min-h-11">
             Nhập đề lẻ
           </TabsTrigger>
@@ -96,14 +102,29 @@ function Page() {
         <TabsContent value="quick" forceMount hidden={tab !== "quick"}>
           <QuickTaskEntry />
         </TabsContent>
-        <DocumentWorkspace active={tab === "documents"} onActivate={() => changeTab("documents")} />
+        <DocumentWorkspace
+          active={tab === "documents"}
+          onActivate={() => changeTab("documents")}
+          onSaved={() => void navigate({ to: "/", search: {} })}
+        />
       </Tabs>
     </>
   );
 }
 
-function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate: () => void }) {
+function DocumentWorkspace({
+  active,
+  onActivate,
+  onSaved,
+}: {
+  active: boolean;
+  onActivate: () => void;
+  onSaved: () => void;
+}) {
   const { user } = useAuth();
+  const requestedDocument = Route.useSearch().document;
+  const restoredDocument = useRef<string | undefined>(undefined);
+  const [documentProblem, setDocumentProblem] = useState<string | null>(null);
   const draftKey = `socratic:${user?.id}:document-input`;
   const [initial] = useState(() => readInputDraft(draftKey));
   const [file, setFile] = useState<string | null>(initial.file ?? null);
@@ -131,21 +152,20 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
   const [detailEditable, setDetailEditable] = useState(false);
   const [questionsOpen, setQuestionsOpen] = useState(true);
   const [questionListOpen, setQuestionListOpen] = useState(true);
-  const [expandedParts, setExpandedParts] = useState<Record<string, boolean>>({});
-  const [expandedQuestions, setExpandedQuestions] = useState<Record<string, boolean>>({});
-  const [contentModalQuestion, setContentModalQuestion] = useState<ParsedQuestion | null>(null);
+  const [step, setStep] = useState(initial.structure ? 2 : 1);
+  const [reviewed, setReviewed] = useState(false);
+  const savedAssignment = useRef<{ signature: string; id: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const previews = useRef<string[]>([]);
   const documentInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   useEffect(() => () => previews.current.forEach((url) => URL.revokeObjectURL(url)), []);
-  const documentsQuery = useQuery({
-    queryKey: ["documents"],
-    queryFn: api.documents,
+  const pendingDocument = useQuery({
+    queryKey: ["document-status", pendingId],
+    queryFn: () => api.document(pendingId!),
+    enabled: Boolean(pendingId),
     refetchInterval: (query) =>
-      query.state.data?.some((document) => ["uploaded", "processing"].includes(document.status))
-        ? 2000
-        : false,
+      ["uploaded", "processing"].includes(query.state.data?.status ?? "") ? 2000 : false,
   });
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -182,6 +202,9 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
       setSelectedId(structure.parts.flatMap((part) => part.questions)[0]?.id ?? "");
   }, [structure, selectedId]);
   const trackPending = (id: string) => {
+    setDocumentProblem(null);
+    setStep(1);
+    setReviewed(false);
     setDocumentId(id);
     setPendingId(id);
     setStructure(null);
@@ -196,6 +219,8 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
     void client.invalidateQueries({ queryKey: ["documents"] });
   };
   const applyStructure = (parsed: DocumentStructure) => {
+    setStep(2);
+    setReviewed(false);
     setStructure(parsed);
     setQuestionsOpen(true);
     setQuestionListOpen(true);
@@ -205,8 +230,6 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
     const questions = parsed.parts.flatMap((part) => part.questions);
     setSelectedIds(questions.length === 1 && firstQuestion ? [firstQuestion.id] : []);
     setPrompt(firstQuestion?.context ?? "");
-    setExpandedParts(firstPart ? { [firstPart.id]: true } : {});
-    setExpandedQuestions(firstQuestion ? { [firstQuestion.id]: true } : {});
   };
   const upload = async (selected?: File) => {
     if (!selected || busy) return;
@@ -399,8 +422,16 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
       .find((question) => question.ideas.some((item) => item.id === idea.id));
     setPrompt(parent?.context ?? idea.context);
   };
-  const confirm = async (mode = inputMode) => {
-    if (busy || !structure || selectedIds.length === 0 || title.trim().length < 5) return;
+  const confirm = async (mode = inputMode, start = true) => {
+    if (
+      busy ||
+      step !== 3 ||
+      !reviewed ||
+      !structure ||
+      selectedIds.length === 0 ||
+      title.trim().length < 5
+    )
+      return;
     setBusy(true);
     try {
       const allQuestions = structure.parts.flatMap((part) =>
@@ -427,9 +458,6 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
             question_id: question.id,
             points: question.points,
             source_only: isSourceOnly(question),
-            subject: question.subject_hint || subject,
-            question_type: question.question_type ?? "open_response",
-            visual_refs: question.visual_refs ?? [],
           },
         }));
       if (!selectedItems.length || selectedItems.some((item) => !item.prompt.trim()))
@@ -444,7 +472,7 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
           selected_ids: selectedIds,
           mode,
         });
-      const result = await api.createMultiAssignment({
+      const body: Parameters<typeof api.createMultiAssignment>[0] = {
         title: title.trim(),
         prompt: selectedItems[0]?.prompt ?? prompt.trim(),
         task_type:
@@ -454,10 +482,20 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
         source_text: text.trim(),
         ...(documentId ? { document_id: documentId } : {}),
         items: selectedItems,
-      });
+      };
+      const signature = JSON.stringify(body);
+      const result =
+        savedAssignment.current?.signature === signature
+          ? savedAssignment.current
+          : await api.createMultiAssignment(body);
+      savedAssignment.current = { signature, id: result.id };
       await client.invalidateQueries({ queryKey: ["assignments"] });
       sessionStorage.removeItem(draftKey);
-      await navigate({ to: "/phien-hoc", search: { assignment: result.id } });
+      if (start) await navigate({ to: "/phien-hoc", search: { assignment: result.id } });
+      else {
+        toast.success("Đã lưu bài học. Em có thể học sau.");
+        onSaved();
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không lưu được đề bài");
     } finally {
@@ -474,49 +512,6 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
     (question) =>
       question.id === selectedId || question.ideas.some((idea) => idea.id === selectedId),
   );
-  const selectedVisuals = (structure?.visuals ?? []).filter(
-    (visual) =>
-      selectedQuestion &&
-      (selectedQuestion.visual_refs?.includes(visual.id) ||
-        selectedQuestion.visual_candidates?.includes(visual.id)),
-  );
-  const modalVisuals = (structure?.visuals ?? []).filter(
-    (visual) =>
-      contentModalQuestion?.visual_refs?.includes(visual.id) ||
-      contentModalQuestion?.visual_candidates?.includes(visual.id),
-  );
-  const toggleVisualLink = (questionId: string, visualId: string) => {
-    setStructure((current) => {
-      if (!current) return current;
-      const question = current.parts.flatMap((part) => part.questions).find((item) => item.id === questionId);
-      if (!question) return current;
-      const linked = question.visual_refs?.includes(visualId) ?? false;
-      return {
-        ...current,
-        parts: current.parts.map((part) => ({
-          ...part,
-          questions: part.questions.map((item) =>
-            item.id === questionId
-              ? {
-                  ...item,
-                  visual_refs: linked
-                    ? (item.visual_refs ?? []).filter((id) => id !== visualId)
-                    : [...(item.visual_refs ?? []), visualId],
-                }
-              : item,
-          ),
-        })),
-        visuals: (current.visuals ?? []).map((visual) => {
-          if (visual.id !== visualId) return visual;
-          const questionIds = linked
-            ? (visual.question_ids ?? []).filter((id) => id !== questionId)
-            : [...new Set([...(visual.question_ids ?? []), questionId])];
-          return { ...visual, question_ids: questionIds,
-                   link_status: questionIds.length ? "confirmed" as const : "unreviewed" as const };
-        }),
-      };
-    });
-  };
   const sharedParagraphs = filterSourceParagraphs(selectedPart?.paragraphs ?? []);
   const sharedSourceLayout = classifyTextLayout(
     sharedParagraphs.map((paragraph) => paragraph.text).join("\n"),
@@ -541,10 +536,20 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
       if (retryFailed) await api.retryDocument(id, trackPending);
       const detail = await api.document(id);
       if (detail.status !== "needs_review" || !detail.text || !detail.structure) {
-        throw new Error(
-          detail.error || "Tài liệu đang được xử lý. Hãy thử tiếp tục khi bản tách sẵn sàng.",
+        setDocumentId(id);
+        setPendingId(id);
+        setTitle(detail.title);
+        setFile(detail.filename);
+        setStructure(null);
+        setStep(1);
+        setDocumentProblem(
+          detail.status === "failed"
+            ? detail.error || "Chưa đọc được tài liệu; em có thể thử xử lý lại."
+            : null,
         );
+        return;
       }
+      setDocumentProblem(null);
       previews.current.forEach((url) => URL.revokeObjectURL(url));
       previews.current = [];
       setImages([]);
@@ -569,23 +574,14 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
       void client.invalidateQueries({ queryKey: ["documents"] });
     }
   };
-  const openDocumentDetail = async (id: string) => {
-    setDetailEditable(false);
-    setDetailOpen(true);
-    setDetailLoading(true);
-    setDetailSelection("");
-    try {
-      const detail = await api.document(id);
-      setDetailDocument(detail);
-      const firstQuestion = detail.structure?.parts.flatMap((part) => part.questions)[0];
-      setDetailSelection(firstQuestion?.id ?? detail.structure?.parts[0]?.id ?? "");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không tải được bản tách");
-      setDetailOpen(false);
-    } finally {
-      setDetailLoading(false);
+  useEffect(() => {
+    if (requestedDocument && restoredDocument.current !== requestedDocument) {
+      restoredDocument.current = requestedDocument;
+      void restoreDocument(requestedDocument);
     }
-  };
+    // Restore only an explicitly selected source, not the whole document library.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedDocument]);
   const openCurrentDetail = () => {
     if (!structure) return;
     setDetailEditable(true);
@@ -642,6 +638,14 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
       part.questions.some((question) => question.id === detailSelection),
   );
   const detailQuestion = detailPart?.questions.find((question) => question.id === detailSelection);
+  const detailVisuals = !detailEditable
+    ? (detailStructure?.visuals ?? []).filter(
+        (visual) =>
+          detailQuestion &&
+          (detailQuestion.visual_refs?.includes(visual.id) ||
+            detailQuestion.visual_candidates?.includes(visual.id)),
+      )
+    : [];
   const detailParagraphs = detailPart?.paragraphs.length
     ? detailPart.paragraphs
     : (detailStructure?.global_paragraphs ?? []);
@@ -683,7 +687,7 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
         mode: inputMode,
       });
       await client.invalidateQueries({ queryKey: ["documents"] });
-      toast.success("Đã lưu bản đã kiểm tra vào lịch sử tài liệu");
+      toast.success("Đã lưu nội dung đã kiểm tra");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không lưu được bản đã kiểm tra");
     } finally {
@@ -712,151 +716,185 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
     <>
       <div className="space-y-5">
         <TabsContent value="documents" forceMount hidden={!active}>
-          <Panel title="Tải tài liệu lên">
-            {pendingId && (
-              <div className="mb-4 rounded-lg border bg-muted/30 p-3 text-sm" role="status">
-                Tài liệu đã được lưu. Nếu rời trang trong lúc xử lý, em có thể tiếp tục từ lịch sử.
-                {!busy && (
+          <Panel title="Chuẩn bị đề từ tài liệu">
+            <ol className="mb-5 grid grid-cols-3 gap-2" aria-label="Các bước chuẩn bị tài liệu">
+              {[
+                [1, "Tải tài liệu"],
+                [2, "Kiểm tra nội dung"],
+                [3, "Chọn câu và lưu"],
+              ].map(([value, label]) => (
+                <li key={value}>
                   <Button
                     type="button"
-                    variant="outline"
-                    className="ml-2"
-                    onClick={() => void restoreDocument(pendingId)}
+                    className="h-auto min-h-12 w-full whitespace-normal px-2 text-xs sm:text-sm"
+                    variant={step === value ? "default" : "outline"}
+                    aria-current={step === value ? "step" : undefined}
+                    disabled={
+                      busy || (Number(value) > 1 && !structure) || (value === 3 && !reviewed)
+                    }
+                    onClick={() => setStep(Number(value))}
                   >
-                    Kiểm tra tài liệu đang xử lý
+                    {value}. {label}
                   </Button>
-                )}
-              </div>
-            )}
-            <details open={!structure} className="rounded-lg border bg-background p-3">
-              <summary className="cursor-pointer text-sm font-semibold focus-visible:outline-2 focus-visible:outline-primary">
-                {structure ? "Đổi tài liệu" : "Chọn ảnh hoặc tệp tài liệu"}
-              </summary>
-              <div
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  chooseFiles(Array.from(e.dataTransfer.files));
-                }}
-                className="mt-3 flex flex-col items-center justify-center rounded-lg border border-dashed px-4 py-8 text-center"
-              >
-                <FileUp className="h-6 w-6 text-primary mb-3" />
-                <span className="text-sm font-medium">
-                  {busy ? "Đang xử lý…" : "Kéo thả tệp vào đây hoặc chọn theo định dạng"}
-                </span>
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  <Button type="button" disabled={busy} onClick={() => imageInput.current?.click()}>
-                    Chọn ảnh tài liệu
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => documentInput.current?.click()}
-                  >
-                    Chọn PDF/Word/TXT
-                  </Button>
+                </li>
+              ))}
+            </ol>
+            <div hidden={step !== 1}>
+              {pendingId && (
+                <div className="mb-4 rounded-lg border bg-muted/30 p-3 text-sm" role="status">
+                  Tài liệu đã được lưu. Nếu rời trang trong lúc xử lý, em có thể tiếp tục từ lịch
+                  sử.
+                  {!busy && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="ml-2"
+                      onClick={() => void restoreDocument(pendingId)}
+                    >
+                      Kiểm tra tài liệu đang xử lý
+                    </Button>
+                  )}
                 </div>
-                <span className="text-xs text-muted-foreground mt-3">
-                  Tối đa 12 ảnh JPG/PNG/WEBP hoặc một tệp PDF/DOC/DOCX/ODT/TXT/MD/CSV/RTF/HTML · mỗi
-                  tệp tối đa 10MB
-                </span>
-                <input
-                  ref={imageInput}
-                  aria-label="Chọn ảnh tài liệu"
-                  disabled={busy}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  accept=".png,.jpg,.jpeg,.webp"
-                  onChange={(e) => {
-                    chooseFiles(Array.from(e.target.files ?? []));
-                    e.target.value = "";
-                  }}
-                />
-                <input
-                  ref={documentInput}
-                  aria-label="Chọn tệp PDF, Word hoặc văn bản"
-                  disabled={busy}
-                  type="file"
-                  className="hidden"
-                  accept=".pdf,.doc,.docx,.odt,.txt,.md,.csv,.rtf,.html,.htm"
-                  onChange={(e) => {
-                    chooseFiles(Array.from(e.target.files ?? []));
-                    e.target.value = "";
-                  }}
-                />
-              </div>
-            </details>
-            {images.length > 1 && (
-              <details className="mt-4 rounded-lg border bg-background p-3" open={!structure}>
-                <summary className="cursor-pointer text-sm font-semibold">
-                  Kiểm tra thứ tự trang · {images.length} ảnh
+              )}
+              <details open={!structure} className="rounded-lg border bg-background p-3">
+                <summary className="cursor-pointer text-sm font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+                  {structure ? "Đổi tài liệu" : "Chọn ảnh hoặc tệp tài liệu"}
                 </summary>
-                <div className="mt-3 space-y-3" aria-label="Thứ tự ảnh của bộ đề">
-                  <p className="text-xs text-muted-foreground">
-                    Tên ảnh hoặc thứ tự chọn tệp có thể sai. Dùng nút lên/xuống để sắp xếp đúng thứ
-                    tự đề.
-                  </p>
-                  {images.map((item, index) => (
-                    <div key={item.id} className="flex items-center gap-2 rounded-md border p-2">
-                      <img
-                        src={item.preview}
-                        alt={`Xem trước ảnh ${index + 1}`}
-                        className="h-16 w-12 object-contain"
-                      />
-                      <span className="min-w-0 flex-1 truncate text-xs">
-                        {index + 1}. {item.file.name}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={busy || index === 0}
-                        aria-label={`Đưa ảnh ${index + 1} lên`}
-                        onClick={() => moveImage(index, -1)}
-                      >
-                        ↑
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={busy || index === images.length - 1}
-                        aria-label={`Đưa ảnh ${index + 1} xuống`}
-                        onClick={() => moveImage(index, 1)}
-                      >
-                        ↓
-                      </Button>
-                    </div>
-                  ))}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
+                <div
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    chooseFiles(Array.from(e.dataTransfer.files));
+                  }}
+                  className="mt-3 flex flex-col items-center justify-center rounded-lg border border-dashed px-4 py-8 text-center"
+                >
+                  <FileUp className="h-6 w-6 text-primary mb-3" />
+                  <span className="text-sm font-medium">
+                    {busy ? "Đang xử lý…" : "Kéo thả tệp vào đây hoặc chọn theo định dạng"}
+                  </span>
+                  <div className="mt-4 flex flex-wrap justify-center gap-2">
+                    <Button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => imageInput.current?.click()}
+                    >
+                      Chọn ảnh tài liệu
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => documentInput.current?.click()}
+                    >
+                      Chọn PDF/Word/TXT
+                    </Button>
+                  </div>
+                  <span className="text-xs text-muted-foreground mt-3">
+                    Tối đa 12 ảnh JPG/PNG/WEBP hoặc một tệp PDF/DOC/DOCX/ODT/TXT/MD/CSV/RTF/HTML ·
+                    mỗi tệp tối đa 10MB
+                  </span>
+                  <input
+                    ref={imageInput}
+                    aria-label="Chọn ảnh tài liệu"
                     disabled={busy}
-                    onClick={() => void processImages()}
-                  >
-                    {busy ? "Đang đọc ảnh…" : "Xác nhận thứ tự & đọc chữ"}
-                  </Button>
+                    type="file"
+                    multiple
+                    className="hidden"
+                    accept=".png,.jpg,.jpeg,.webp"
+                    onChange={(e) => {
+                      chooseFiles(Array.from(e.target.files ?? []));
+                      e.target.value = "";
+                    }}
+                  />
+                  <input
+                    ref={documentInput}
+                    aria-label="Chọn tệp PDF, Word hoặc văn bản"
+                    disabled={busy}
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.odt,.txt,.md,.csv,.rtf,.html,.htm"
+                    onChange={(e) => {
+                      chooseFiles(Array.from(e.target.files ?? []));
+                      e.target.value = "";
+                    }}
+                  />
                 </div>
               </details>
-            )}
-            {file && (
-              <div className="mt-4 rounded-md border p-3 text-sm">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-secondary" />
-                  <span className="truncate">{file}</span>
+              {images.length > 1 && (
+                <details className="mt-4 rounded-lg border bg-background p-3" open={!structure}>
+                  <summary className="cursor-pointer text-sm font-semibold">
+                    Kiểm tra thứ tự trang · {images.length} ảnh
+                  </summary>
+                  <div className="mt-3 space-y-3" aria-label="Thứ tự ảnh của bộ đề">
+                    <p className="text-xs text-muted-foreground">
+                      Tên ảnh hoặc thứ tự chọn tệp có thể sai. Dùng nút lên/xuống để sắp xếp đúng
+                      thứ tự đề.
+                    </p>
+                    {images.map((item, index) => (
+                      <div key={item.id} className="flex items-center gap-2 rounded-md border p-2">
+                        <img
+                          src={item.preview}
+                          alt={`Xem trước ảnh ${index + 1}`}
+                          className="h-16 w-12 object-contain"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-xs">
+                          {index + 1}. {item.file.name}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busy || index === 0}
+                          aria-label={`Đưa ảnh ${index + 1} lên`}
+                          onClick={() => moveImage(index, -1)}
+                        >
+                          ↑
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busy || index === images.length - 1}
+                          aria-label={`Đưa ảnh ${index + 1} xuống`}
+                          onClick={() => moveImage(index, 1)}
+                        >
+                          ↓
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      disabled={busy}
+                      onClick={() => void processImages()}
+                    >
+                      {busy ? "Đang đọc ảnh…" : "Xác nhận thứ tự & đọc chữ"}
+                    </Button>
+                  </div>
+                </details>
+              )}
+              {file && (
+                <div className="mt-4 rounded-md border p-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-secondary" />
+                    <span className="truncate">{file}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {questionCount
+                      ? `${structure?.parts.length} phần · ${questionCount} câu`
+                      : structure
+                        ? "Tài liệu tham khảo · Chưa có câu hỏi"
+                        : "Chưa phân tích văn bản"}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  {questionCount
-                    ? `${structure?.parts.length} phần · ${questionCount} câu`
-                    : structure
-                      ? "Tài liệu tham khảo · Chưa có câu hỏi"
-                      : "Chưa phân tích văn bản"}
-                </p>
-              </div>
-            )}
+              )}
+              {structure && (
+                <Button className="mt-4" type="button" onClick={() => setStep(2)}>
+                  Kiểm tra nội dung đã đọc
+                </Button>
+              )}
+            </div>
             <form
               className="mt-4 space-y-3"
               onSubmit={(e) => {
@@ -865,811 +903,599 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
               }}
             >
               <fieldset disabled={busy} className="min-w-0 space-y-3">
-                {(structure || (text.trim().length > 0 && !imagesNeedProcessing)) && (
-                  <details className="rounded-lg border p-3 sm:p-4">
-                    <summary className="cursor-pointer text-sm font-medium">
-                      Chỉnh sửa tài liệu
-                    </summary>
-                    <div className="mt-4 space-y-4">
-                      <label className="block text-sm font-medium">
-                        Tên tài liệu
-                        <Input
-                          className="mt-1.5"
-                          value={title}
-                          onChange={(event) => setTitle(event.target.value)}
-                          maxLength={300}
-                        />
-                      </label>
-                      {structure ? (
-                        <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="outline" onClick={openCurrentDetail}>
-                            Sửa bản tách
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                              setStructure(null);
-                              setSelectedIds([]);
-                              setSelectedId("");
-                              setSourcePages(null);
-                            }}
-                          >
-                            Sửa văn bản gốc
-                          </Button>
-                          <Button type="button" variant="outline" onClick={() => void saveReview()}>
-                            Lưu thay đổi
-                          </Button>
-                          {documentId && (
-                            <Button type="button" variant="outline" asChild>
-                              <a
-                                href={`/api/documents/${documentId}/original`}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                Xem bản gốc
-                              </a>
-                            </Button>
-                          )}
-                        </div>
-                      ) : (
-                        <>
-                          <label className="block text-sm font-medium">
-                            Văn bản đọc từ tài liệu
-                            <Textarea
-                              className="mt-2 min-h-40"
-                              value={text}
-                              maxLength={150000}
-                              onChange={(event) => {
-                                setText(event.target.value);
-                                setSourcePages(null);
-                                setSourceWarnings([]);
-                                setContentBlocks([]);
-                                setSelectedBlockId("");
-                                setSelectedId("");
-                                setSelectedIds([]);
-                                setPrompt("");
-                              }}
-                            />
-                          </label>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            disabled={text.trim().length < 15}
-                            onClick={() => void analyze()}
-                          >
-                            Phân tích lại
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </details>
-                )}
-                {structure && [...sourceWarnings, ...structure.warnings].length > 0 && (
-                  <aside
-                    className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
-                    aria-label="Cảnh báo cần kiểm tra"
-                  >
-                    <p className="font-semibold">Cần kiểm tra trước khi học</p>
-                    <ul className="mt-2 list-disc space-y-1 pl-5">
-                      {Array.from(new Set([...sourceWarnings, ...structure.warnings])).map(
-                        (warning) => (
-                          <li key={warning}>{warning}</li>
-                        ),
-                      )}
-                    </ul>
-                  </aside>
-                )}
-                {structure && structure.excluded.length > 0 && (
-                  <details className="rounded-lg border p-3 text-sm">
-                    <summary className="cursor-pointer font-medium">
-                      Nội dung đã loại khỏi phiên học ({structure.excluded.length} dòng)
-                    </summary>
-                    <div className="mt-3 max-h-60 space-y-2 overflow-y-auto">
-                      {structure.excluded.map((line, index) => (
-                        <p key={index} className="whitespace-pre-wrap break-words">
-                          {line.page ? `Trang ${line.page}: ` : ""}
-                          {line.text}
-                        </p>
-                      ))}
-                    </div>
-                  </details>
-                )}
-                {needsSourceChoice && (
-                  <section
-                    className="space-y-3 rounded-lg border bg-muted/20 p-4"
-                    aria-label="Chọn cách học tài liệu"
-                  >
-                    <h2 className="text-base font-semibold">
-                      Chưa tìm thấy câu hỏi trong tài liệu
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                      Em có thể bắt đầu tìm hiểu nội dung, hoặc thêm một yêu cầu cụ thể.
-                    </p>
-                    <p className="line-clamp-6 whitespace-pre-wrap break-words text-sm leading-7">
-                      {text}
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" onClick={() => void confirm("reference")}>
-                        Học theo tài liệu
-                      </Button>
-                      <Button type="button" variant="outline" onClick={openCurrentDetail}>
-                        Nhập thêm yêu cầu
-                      </Button>
-                    </div>
-                  </section>
-                )}
-                {structure && !needsSourceChoice && (
-                  <section
-                    className="rounded-xl border bg-muted/10 p-3"
-                    aria-label="Chọn câu để học"
-                  >
-                    <button
-                      type="button"
-                      aria-expanded={questionsOpen}
-                      aria-controls="question-picker-content"
-                      onClick={() => setQuestionsOpen((open) => !open)}
-                      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-2 text-left text-sm font-semibold hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-primary"
-                    >
-                      <span>
-                        Chọn câu để học ·{" "}
-                        {structure.parts.reduce((total, part) => total + part.questions.length, 0)}{" "}
-                        câu · Đã chọn {selectedIds.length}
-                      </span>
-                      <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
-                        {questionsOpen ? "Thu gọn" : "Mở ra"}
-                        <ChevronDown
-                          aria-hidden="true"
-                          className={`h-4 w-4 transition-transform ${questionsOpen ? "rotate-180" : ""}`}
-                        />
-                      </span>
-                    </button>
-                    <div
-                      id="question-picker-content"
-                      hidden={!questionsOpen}
-                      className="mt-4 space-y-5"
-                      aria-label="Cấu trúc bộ đề"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-4">
-                        <div>
-                          <h2 className="text-lg font-semibold">
-                            {sourceOnly ? "Học theo nội dung tài liệu" : "Chọn câu để học"}
-                          </h2>
-                          <p className="text-sm text-muted-foreground">
-                            {sourceOnly
-                              ? inputMode === "reference"
-                                ? "Tài liệu được dùng làm ngữ liệu để trao đổi và đặt câu hỏi học tập."
-                                : "Chưa tìm thấy câu hỏi rõ ràng. Em có thể học theo toàn bộ nội dung đầu vào hoặc bổ sung yêu cầu trong bản tách."
-                              : `Đã tách ${structure.parts.length} phần · ${structure.parts.reduce((total, part) => total + part.questions.length, 0)} câu`}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-                        <p className="text-sm font-medium">
-                          Đã chọn <span className="text-primary">{selectedIds.length}</span>{" "}
-                          {sourceOnly ? "tài liệu" : "câu"}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              setSelectedIds(
-                                structure.parts.flatMap((part) =>
-                                  part.questions.map((question) => question.id),
-                                ),
-                              )
-                            }
-                          >
-                            Chọn tất cả
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setSelectedIds([])}
-                            disabled={selectedIds.length === 0}
-                          >
-                            Bỏ chọn
-                          </Button>
-                        </div>
-                      </div>
-                      <div
-                        className={`grid gap-5 lg:items-start ${questionListOpen ? "lg:grid-cols-[minmax(220px,290px)_minmax(0,1fr)]" : "lg:grid-cols-1"}`}
+                <div hidden={step !== 2} className="space-y-4">
+                  {structure && (
+                    <section className="rounded-lg border bg-background p-4">
+                      <h2 className="font-semibold">Kiểm tra nội dung trước khi chọn câu</h2>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        {title} · {questionCount} câu. Đối chiếu bản tách và ngữ liệu với tài liệu
+                        gốc; em có thể sửa nội dung nhận dạng chưa đúng.
+                      </p>
+                      <Button
+                        className="mt-3"
+                        type="button"
+                        variant="outline"
+                        onClick={openCurrentDetail}
                       >
-                        <nav className="space-y-3" aria-label="Danh sách câu hỏi">
-                          <div className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-lg border bg-background/95 p-2 shadow-sm backdrop-blur-sm">
-                            <span className="px-1 text-sm font-semibold">Danh sách câu hỏi</span>
+                        Xem và sửa bản tách
+                      </Button>
+                    </section>
+                  )}
+                  {(structure || (text.trim().length > 0 && !imagesNeedProcessing)) && (
+                    <details className="rounded-lg border p-3 sm:p-4">
+                      <summary className="cursor-pointer text-sm font-medium">
+                        Chỉnh sửa tài liệu
+                      </summary>
+                      <div className="mt-4 space-y-4">
+                        <label className="block text-sm font-medium">
+                          Tên tài liệu
+                          <Input
+                            className="mt-1.5"
+                            value={title}
+                            onChange={(event) => setTitle(event.target.value)}
+                            maxLength={300}
+                          />
+                        </label>
+                        {structure ? (
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" variant="outline" onClick={openCurrentDetail}>
+                              Sửa bản tách
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                setStructure(null);
+                                setSelectedIds([]);
+                                setSelectedId("");
+                                setSourcePages(null);
+                              }}
+                            >
+                              Sửa văn bản gốc
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void saveReview()}
+                            >
+                              Lưu thay đổi
+                            </Button>
+                            {documentId && (
+                              <Button type="button" variant="outline" asChild>
+                                <a
+                                  href={`/api/documents/${documentId}/original`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Xem bản gốc
+                                </a>
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            <label className="block text-sm font-medium">
+                              Văn bản đọc từ tài liệu
+                              <Textarea
+                                className="mt-2 min-h-40"
+                                value={text}
+                                maxLength={150000}
+                                onChange={(event) => {
+                                  setText(event.target.value);
+                                  setSourcePages(null);
+                                  setSourceWarnings([]);
+                                  setContentBlocks([]);
+                                  setSelectedBlockId("");
+                                  setSelectedId("");
+                                  setSelectedIds([]);
+                                  setPrompt("");
+                                }}
+                              />
+                            </label>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={text.trim().length < 15}
+                              onClick={() => void analyze()}
+                            >
+                              Phân tích lại
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </details>
+                  )}
+                  {structure && [...sourceWarnings, ...structure.warnings].length > 0 && (
+                    <aside
+                      className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+                      aria-label="Cảnh báo cần kiểm tra"
+                    >
+                      <p className="font-semibold">Cần kiểm tra trước khi học</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {Array.from(new Set([...sourceWarnings, ...structure.warnings])).map(
+                          (warning) => (
+                            <li key={warning}>{warning}</li>
+                          ),
+                        )}
+                      </ul>
+                    </aside>
+                  )}
+                  {structure && structure.excluded.length > 0 && (
+                    <details className="rounded-lg border p-3 text-sm">
+                      <summary className="cursor-pointer font-medium">
+                        Nội dung đã loại khỏi phiên học ({structure.excluded.length} dòng)
+                      </summary>
+                      <div className="mt-3 max-h-60 space-y-2 overflow-y-auto">
+                        {structure.excluded.map((line, index) => (
+                          <p key={index} className="whitespace-pre-wrap break-words">
+                            {line.page ? `Trang ${line.page}: ` : ""}
+                            {line.text}
+                          </p>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                  {structure && (
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" onClick={() => setStep(1)}>
+                        Quay lại tải tài liệu
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setReviewed(true);
+                          setStep(3);
+                        }}
+                      >
+                        Đã kiểm tra, chọn câu
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div hidden={step !== 3} className="space-y-4">
+                  {needsSourceChoice && (
+                    <section
+                      className="space-y-3 rounded-lg border bg-muted/20 p-4"
+                      aria-label="Chọn cách học tài liệu"
+                    >
+                      <h2 className="text-base font-semibold">
+                        Chưa tìm thấy câu hỏi trong tài liệu
+                      </h2>
+                      <p className="text-sm text-muted-foreground">
+                        Em có thể bắt đầu tìm hiểu nội dung, hoặc thêm một yêu cầu cụ thể.
+                      </p>
+                      <p className="line-clamp-6 whitespace-pre-wrap break-words text-sm leading-7">
+                        {text}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" onClick={() => void confirm("reference")}>
+                          Học theo tài liệu
+                        </Button>
+                        <Button type="button" variant="outline" onClick={openCurrentDetail}>
+                          Nhập thêm yêu cầu
+                        </Button>
+                      </div>
+                    </section>
+                  )}
+                  {structure && !needsSourceChoice && (
+                    <section
+                      className="rounded-xl border bg-muted/10 p-3"
+                      aria-label="Chọn câu để học"
+                    >
+                      <button
+                        type="button"
+                        aria-expanded={questionsOpen}
+                        aria-controls="question-picker-content"
+                        onClick={() => setQuestionsOpen((open) => !open)}
+                        className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-2 text-left text-sm font-semibold hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-primary"
+                      >
+                        <span>
+                          Chọn câu để học ·{" "}
+                          {structure.parts.reduce(
+                            (total, part) => total + part.questions.length,
+                            0,
+                          )}{" "}
+                          câu · Đã chọn {selectedIds.length}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
+                          {questionsOpen ? "Thu gọn" : "Mở ra"}
+                          <ChevronDown
+                            aria-hidden="true"
+                            className={`h-4 w-4 transition-transform ${questionsOpen ? "rotate-180" : ""}`}
+                          />
+                        </span>
+                      </button>
+                      <div
+                        id="question-picker-content"
+                        hidden={!questionsOpen}
+                        className="mt-4 space-y-5"
+                        aria-label="Cấu trúc bộ đề"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-4">
+                          <div>
+                            <h2 className="text-lg font-semibold">
+                              {sourceOnly ? "Học theo nội dung tài liệu" : "Chọn câu để học"}
+                            </h2>
+                            <p className="text-sm text-muted-foreground">
+                              {sourceOnly
+                                ? inputMode === "reference"
+                                  ? "Tài liệu được dùng làm ngữ liệu để trao đổi và đặt câu hỏi học tập."
+                                  : "Chưa tìm thấy câu hỏi rõ ràng. Em có thể học theo toàn bộ nội dung đầu vào hoặc bổ sung yêu cầu trong bản tách."
+                                : `Đã tách ${structure.parts.length} phần · ${structure.parts.reduce((total, part) => total + part.questions.length, 0)} câu`}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                          <p className="text-sm font-medium">
+                            Đã chọn <span className="text-primary">{selectedIds.length}</span>{" "}
+                            {sourceOnly ? "tài liệu" : "câu"}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
-                              aria-expanded={questionListOpen}
-                              aria-controls="question-list-content"
-                              aria-label={
-                                questionListOpen
-                                  ? "Thu gọn danh sách câu hỏi"
-                                  : "Mở danh sách câu hỏi"
+                              onClick={() =>
+                                setSelectedIds(
+                                  structure.parts.flatMap((part) =>
+                                    part.questions.map((question) => question.id),
+                                  ),
+                                )
                               }
-                              onClick={() => setQuestionListOpen((open) => !open)}
                             >
-                              {questionListOpen ? "Thu gọn" : "Mở danh sách"}
-                              <ChevronDown
-                                aria-hidden="true"
-                                className={`h-4 w-4 transition-transform ${questionListOpen ? "rotate-180" : ""}`}
-                              />
+                              Chọn tất cả
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setSelectedIds([])}
+                              disabled={selectedIds.length === 0}
+                            >
+                              Bỏ chọn
                             </Button>
                           </div>
-                          <div
-                            id="question-list-content"
-                            hidden={!questionListOpen}
-                            className="space-y-4"
-                          >
-                            {structure.parts.map((part) => (
-                              <div
-                                key={part.id}
-                                className="overflow-hidden rounded-xl border bg-background"
+                        </div>
+                        <div
+                          className={`grid gap-5 lg:items-start ${questionListOpen ? "lg:grid-cols-[minmax(220px,290px)_minmax(0,1fr)]" : "lg:grid-cols-1"}`}
+                        >
+                          <nav className="space-y-3" aria-label="Danh sách câu hỏi">
+                            <div className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-lg border bg-background/95 p-2 shadow-sm backdrop-blur-sm">
+                              <span className="px-1 text-sm font-semibold">Danh sách câu hỏi</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-expanded={questionListOpen}
+                                aria-controls="question-list-content"
+                                aria-label={
+                                  questionListOpen
+                                    ? "Thu gọn danh sách câu hỏi"
+                                    : "Mở danh sách câu hỏi"
+                                }
+                                onClick={() => setQuestionListOpen((open) => !open)}
                               >
-                                <button
-                                  type="button"
-                                  className="flex min-h-12 w-full items-center justify-between gap-3 border-b bg-muted/50 px-4 py-3 text-left text-sm font-semibold hover:bg-muted"
-                                  aria-expanded={Boolean(expandedParts[part.id])}
-                                  onClick={() => setExpandedParts((current) => ({ ...current, [part.id]: !current[part.id] }))}
+                                {questionListOpen ? "Thu gọn" : "Mở danh sách"}
+                                <ChevronDown
+                                  aria-hidden="true"
+                                  className={`h-4 w-4 transition-transform ${questionListOpen ? "rotate-180" : ""}`}
+                                />
+                              </Button>
+                            </div>
+                            <div
+                              id="question-list-content"
+                              hidden={!questionListOpen}
+                              className="space-y-4"
+                            >
+                              {structure.parts.map((part) => (
+                                <div
+                                  key={part.id}
+                                  className="overflow-hidden rounded-xl border bg-background"
                                 >
-                                  <span>{part.title}</span>
-                                  <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${expandedParts[part.id] ? "rotate-180" : ""}`} />
-                                </button>
-                                <div hidden={!expandedParts[part.id]} className="space-y-1 p-2">
-                                  {part.questions.map((question) => {
-                                    const active = selectedQuestion?.id === question.id;
-                                    const expanded = Boolean(expandedQuestions[question.id]);
-                                    return (
-                                      <div
-                                        key={question.id}
-                                        className={`rounded-lg border transition-colors ${active ? "border-primary bg-primary/10" : "border-transparent hover:border-border hover:bg-muted/50"}`}
-                                      >
-                                        <div className="flex items-start gap-2 px-3 py-3">
-                                        <input
-                                          type="checkbox"
-                                          aria-label={`Chọn ${question.label}`}
-                                          checked={selectedIds.includes(question.id)}
-                                          onChange={() => toggleQuestion(question.id)}
-                                          className="mt-1 h-4 w-4 shrink-0 accent-primary"
-                                        />
-                                        <button
-                                          type="button"
-                                          aria-current={active ? "true" : undefined}
-                                          onClick={() => selectQuestion(question)}
-                                          className="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-primary"
+                                  <h3 className="border-b bg-muted/50 px-4 py-3 text-sm font-semibold">
+                                    {part.title}
+                                  </h3>
+                                  <div className="space-y-1 p-2">
+                                    {part.questions.map((question) => {
+                                      const active = selectedQuestion?.id === question.id;
+                                      return (
+                                        <div
+                                          key={question.id}
+                                          className={`flex items-start gap-2 rounded-lg border px-3 py-3 transition-colors ${active ? "border-primary bg-primary/10" : "border-transparent hover:border-border hover:bg-muted/50"}`}
                                         >
-                                          <span className="flex items-center justify-between gap-2 text-sm font-semibold">
-                                            <span>{question.label}</span>
-                                            {question.points && (
-                                              <span className="text-xs font-medium text-muted-foreground">
-                                                {question.points}
+                                          <input
+                                            type="checkbox"
+                                            aria-label={`Chọn ${question.label}`}
+                                            checked={selectedIds.includes(question.id)}
+                                            onChange={() => toggleQuestion(question.id)}
+                                            className="mt-1 h-4 w-4 shrink-0 accent-primary"
+                                          />
+                                          <button
+                                            type="button"
+                                            aria-current={active ? "true" : undefined}
+                                            onClick={() => selectQuestion(question)}
+                                            className="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-primary"
+                                          >
+                                            <span className="flex items-center justify-between gap-2 text-sm font-semibold">
+                                              <span>{question.label}</span>
+                                              {question.points && (
+                                                <span className="text-xs font-medium text-muted-foreground">
+                                                  {question.points}
+                                                </span>
+                                              )}
+                                            </span>
+                                            <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                                              {formatProse(question.task || question.text)}
+                                            </span>
+                                            {question.materials && (
+                                              <span className="mt-2 inline-block rounded bg-background/80 px-2 py-0.5 text-[11px] font-medium text-primary">
+                                                Có ngữ liệu riêng
                                               </span>
                                             )}
-                                          </span>
-                                          <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                                            {formatProse(question.task || question.text)}
-                                          </span>
-                                          {question.materials && (
-                                            <span className="mt-2 inline-block rounded bg-background/80 px-2 py-0.5 text-[11px] font-medium text-primary">
-                                              Có ngữ liệu riêng
-                                            </span>
-                                          )}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                          aria-label={`${expanded ? "Thu gọn" : "Mở rộng"} ${question.label}`}
-                                          aria-expanded={expanded}
-                                          onClick={() => setExpandedQuestions((current) => ({ ...current, [question.id]: !current[question.id] }))}
-                                        >
-                                          <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
-                                        </button>
+                                          </button>
                                         </div>
-                                        <div hidden={!expanded} className="border-t px-10 pb-3 pt-2">
-                                          {(question.options?.length ?? 0) > 0 && (
-                                            <ol className="grid gap-2 sm:grid-cols-2">
-                                              {question.options?.map((option) => (
-                                                <li key={option.label} className="rounded-md border bg-background p-2 text-xs">
-                                                  <span className="mr-2 font-semibold text-primary">{option.label}.</span>{option.text}
-                                                </li>
-                                              ))}
-                                            </ol>
-                                          )}
-                                          {(question.statements?.length ?? 0) > 0 && (
-                                            <ol className="space-y-1 text-xs">
-                                              {question.statements?.map((statement) => (
-                                                <li key={statement.label} className="rounded-md border bg-background p-2">
-                                                  <span className="mr-2 font-semibold text-primary">{statement.label})</span>{statement.text}
-                                                </li>
-                                              ))}
-                                            </ol>
-                                          )}
-                                          <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => setContentModalQuestion(question)}>
-                                            Xem nội dung / hình ảnh
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
+                                      );
+                                    })}
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        </nav>
-                        {selectedQuestion && selectedPart && (
-                          <article
-                            className="min-w-0 space-y-5 rounded-xl border bg-background p-4 shadow-sm sm:p-6"
-                            aria-label={`Chi tiết ${selectedQuestion.label}`}
-                          >
-                            <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
-                              <div>
-                                <p className="text-xs font-medium text-muted-foreground">
-                                  {selectedPart.title}
-                                </p>
-                                <h3 className="mt-1 text-xl font-semibold">
-                                  {selectedQuestion.label}
-                                </h3>
-                                {selectedQuestion.question_type && (
-                                  <p className="mt-1 text-xs text-muted-foreground">
-                                    {{
-                                      multiple_choice: "Trắc nghiệm chọn đáp án",
-                                      true_false: "Trắc nghiệm đúng – sai",
-                                      short_answer: "Trả lời ngắn",
-                                      essay: "Tự luận",
-                                      open_response: "Câu hỏi mở",
-                                    }[selectedQuestion.question_type]}
+                              ))}
+                            </div>
+                          </nav>
+                          {selectedQuestion && selectedPart && (
+                            <article
+                              className="min-w-0 space-y-5 rounded-xl border bg-background p-4 shadow-sm sm:p-6"
+                              aria-label={`Chi tiết ${selectedQuestion.label}`}
+                            >
+                              <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
+                                <div>
+                                  <p className="text-xs font-medium text-muted-foreground">
+                                    {selectedPart.title}
                                   </p>
-                                )}
-                              </div>
-                              <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                {selectedQuestion.points && (
-                                  <span className="rounded-full border px-2.5 py-1">
-                                    {selectedQuestion.points}
-                                  </span>
-                                )}
-                                {selectedQuestion.source_pages.length > 0 && (
-                                  <span className="rounded-full border px-2.5 py-1">
-                                    Trang/ảnh {selectedQuestion.source_pages.join(", ")}
-                                  </span>
-                                )}
-                                <Button type="button" size="sm" variant="outline" onClick={() => setContentModalQuestion(selectedQuestion)}>
-                                  Xem nội dung
-                                </Button>
-                              </div>
-                            </header>
-                            {selectedQuestion.task ? (
-                              <section
-                                aria-label="Yêu cầu của câu hỏi"
-                                className="rounded-lg border border-primary/30 bg-primary/5 p-4 sm:p-5"
-                              >
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
-                                  01 · Yêu cầu cần làm
-                                </h4>
-                                <p className="mt-3 max-w-prose whitespace-pre-wrap text-base font-medium leading-7 text-foreground">
-                                  {formatProse(selectedQuestion.task)}
-                                </p>
-                              </section>
-                            ) : (
-                              <p className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-                                Tài liệu này không có câu hỏi tường minh. Nội dung gốc được giữ
-                                nguyên bên dưới để em đọc và đặt câu hỏi học tập.
-                              </p>
-                            )}
-                            {(selectedQuestion.options?.length ?? 0) > 0 && (
-                              <details className="rounded-lg border p-4">
-                                <summary className="cursor-pointer text-sm font-semibold">
-                                  Các phương án ({selectedQuestion.options?.length})
-                                </summary>
-                                <ol className="mt-3 grid gap-2 sm:grid-cols-2">
-                                  {selectedQuestion.options?.map((option) => (
-                                    <li key={option.label} className="rounded-md border bg-muted/20 p-3 text-sm">
-                                      <span className="mr-2 font-semibold text-primary">{option.label}.</span>
-                                      {option.text}
-                                    </li>
-                                  ))}
-                                </ol>
-                              </details>
-                            )}
-                            {(selectedQuestion.statements?.length ?? 0) > 0 && (
-                              <details className="rounded-lg border p-4">
-                                <summary className="cursor-pointer text-sm font-semibold">
-                                  Các mệnh đề đúng – sai ({selectedQuestion.statements?.length})
-                                </summary>
-                                <ol className="mt-3 space-y-2">
-                                  {selectedQuestion.statements?.map((statement) => (
-                                    <li key={statement.label} className="rounded-md border bg-muted/20 p-3 text-sm">
-                                      <span className="mr-2 font-semibold text-primary">{statement.label})</span>
-                                      {statement.text}
-                                    </li>
-                                  ))}
-                                </ol>
-                              </details>
-                            )}
-                            {selectedVisuals.length > 0 && (
-                              <details
-                                hidden={selectedVisuals.every((visual) => visual.kind !== "question")}
-                                open={selectedVisuals.some((visual) => visual.kind === "question")}
-                                className="rounded-lg border p-4"
-                              >
-                                <summary className="cursor-pointer text-sm font-semibold">
-                                  Hình, bảng hoặc sơ đồ liên quan ({selectedVisuals.length})
-                                </summary>
-                                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                                  {selectedVisuals.some((visual) => visual.kind === "question")
-                                    ? "Khung ảnh câu hỏi được giữ nguyên để gia sư AI đọc trực tiếp. Chọn ảnh để xem bản lớn và đối chiếu khung cắt."
-                                    : "Liên kết hình do AI đề xuất; hãy đối chiếu với tài liệu trước khi học."}
-                                </p>
-                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                  {selectedVisuals.map((visual) => (
-                                    <figure key={visual.id} className="min-w-0 rounded-md border bg-background p-3">
-                                      {documentId && (
-                                        <a
-                                          href={`/api/documents/${documentId}/visuals/${visual.id}/image`}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          aria-label={`Mở ${visual.kind === "question" ? "ảnh câu hỏi" : "hình"} trang ${visual.page} kích thước đầy đủ`}
-                                          className="block rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-                                        >
-                                          <img
-                                            src={`/api/documents/${documentId}/visuals/${visual.id}/image`}
-                                            alt={visual.kind === "question"
-                                              ? `Ảnh câu hỏi ${visual.question_label ?? ""}${visual.section ? `, ${visual.section}` : ""}, trang ${visual.page}`
-                                              : visual.description || `${visual.kind} trên trang ${visual.page}`}
-                                            loading="lazy"
-                                            className="max-h-72 max-w-full rounded object-contain"
-                                          />
-                                        </a>
-                                      )}
-                                      <figcaption className="mt-2 text-xs text-muted-foreground">
-                                        {visual.kind === "question" ? (
-                                          <>
-                                            Ảnh câu hỏi
-                                            {visual.question_label ? ` · ${visual.question_label}` : ""}
-                                            {visual.section ? ` · ${visual.section}` : ""}
-                                            {` · Trang ${visual.page}`}
-                                          </>
-                                        ) : (
-                                          `Trang ${visual.page} · ${visual.kind}`
-                                        )}
-                                        {visual.uncertain ? " · Cần đối chiếu khung ảnh" : ""}
-                                        {visual.link_status === "unreviewed"
-                                          ? " · Chưa gắn với câu"
-                                          : visual.link_status === "proposed"
-                                            ? " · AI đề xuất"
-                                            : " · Đã xác nhận"}
-                                        {visual.description ? ` · ${visual.description}` : ""}
-                                      </figcaption>
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant={selectedQuestion.visual_refs?.includes(visual.id) ? "secondary" : "outline"}
-                                        className="mt-2"
-                                        onClick={() => toggleVisualLink(selectedQuestion.id, visual.id)}
-                                      >
-                                        {selectedQuestion.visual_refs?.includes(visual.id)
-                                          ? visual.kind === "question" ? "Gỡ ảnh câu hỏi" : "Bỏ liên kết"
-                                          : visual.kind === "question" ? "Gắn ảnh câu hỏi vào câu này" : "Dùng hình cho câu này"}
-                                      </Button>
-                                    </figure>
-                                  ))}
+                                  <h3 className="mt-1 text-xl font-semibold">
+                                    {selectedQuestion.label}
+                                  </h3>
                                 </div>
-                              </details>
-                            )}
-                            {selectedIdea && (
-                              <section
-                                className="rounded-lg border border-primary/30 p-4"
-                                aria-label="Ý nhỏ đang chọn"
-                              >
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
-                                  Ý {selectedIdea.label} đang chọn
-                                </h4>
-                                <p className="mt-2 whitespace-pre-wrap text-sm leading-7">
-                                  {selectedIdea.text}
-                                </p>
-                              </section>
-                            )}
-                            {selectedQuestion.materials && (
-                              <section hidden
-                                aria-label="Ngữ liệu đi kèm"
-                                className="rounded-lg border bg-muted/30 p-4 sm:p-5"
-                              >
-                                <h4 className="text-xs font-bold uppercase tracking-wider text-foreground/70">
-                                  {selectedQuestion.task
-                                    ? "02 · Ngữ liệu đi kèm"
-                                    : "Nội dung tài liệu"}
-                                </h4>
-                                {selectedQuestion.task && (
-                                  <p className="mt-1 text-xs text-muted-foreground">
-                                    Dùng để phân tích hoặc làm dẫn chứng; đây không phải yêu cầu cần
-                                    trả lời.
-                                  </p>
-                                )}
-                                <div
-                                  className="mt-4 min-w-0 rounded-md border bg-background p-4"
-                                  aria-label="Nội dung ngữ liệu riêng"
-                                >
-                                  {classifyTextLayout(
-                                    selectedQuestion.materials,
-                                    selectedQuestion.task || selectedQuestion.text,
-                                  ) === "poetry" ? (
-                                    <p className="whitespace-pre-wrap break-words text-sm leading-7">
-                                      {selectedQuestion.materials}
-                                    </p>
-                                  ) : (
-                                    <div className="space-y-4">
-                                      {splitProseParagraphs(selectedQuestion.materials).map(
-                                        (paragraph, index) => (
-                                          <p
-                                            key={index}
-                                            className="w-full break-words text-sm leading-7"
-                                          >
-                                            {paragraph}
-                                          </p>
-                                        ),
-                                      )}
-                                    </div>
+                                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  {selectedQuestion.points && (
+                                    <span className="rounded-full border px-2.5 py-1">
+                                      {selectedQuestion.points}
+                                    </span>
+                                  )}
+                                  {selectedQuestion.source_pages.length > 0 && (
+                                    <span className="rounded-full border px-2.5 py-1">
+                                      Trang/ảnh {selectedQuestion.source_pages.join(", ")}
+                                    </span>
                                   )}
                                 </div>
-                              </section>
-                            )}
-                            {sharedParagraphs.length > 0 && (
-                              <details hidden className="group rounded-lg border bg-background p-4">
-                                <summary className="cursor-pointer text-sm font-semibold focus-visible:outline-2 focus-visible:outline-primary">
-                                  03 · Đọc ngữ liệu chung của phần này ({sharedParagraphs.length}{" "}
-                                  mục)
-                                </summary>
-                                <p className="mt-2 text-xs text-muted-foreground">
-                                  Các đoạn liên quan được hiển thị riêng để em đọc và đối chiếu với
-                                  câu hỏi.
-                                </p>
-                                <div
-                                  className={sourceParagraphListClass(sharedSourceLayout)}
-                                  aria-label={`Ngữ liệu của ${selectedPart.title}`}
+                              </header>
+                              {selectedQuestion.task ? (
+                                <section
+                                  aria-label="Yêu cầu của câu hỏi"
+                                  className="rounded-lg border border-primary/30 bg-primary/5 p-4 sm:p-5"
                                 >
-                                  {sharedParagraphs.map((paragraph) => {
-                                    const marker = /^\((\d{1,2})\)\s*/.exec(paragraph.text);
-                                    const content = marker
-                                      ? paragraph.text.slice(marker[0].length)
-                                      : paragraph.text;
-                                    return (
-                                      <div
-                                        key={paragraph.id}
-                                        className="w-full min-w-0 rounded-lg border border-l-2 border-l-primary/40 bg-muted/20 p-4"
-                                      >
-                                        {marker && (
-                                          <p className="mb-1 text-xs font-bold text-primary">
-                                            Đoạn {marker[1]}
-                                          </p>
-                                        )}
-                                        <p
-                                          className={`break-words text-sm leading-7 text-foreground ${sharedSourceLayout === "poetry" ? "whitespace-pre-wrap" : "w-full"}`}
-                                        >
-                                          {sharedSourceLayout === "poetry"
-                                            ? content
-                                            : formatProse(content)}
-                                        </p>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </details>
-                            )}
-                            {selectedQuestion.source_selection === "matched_phrase" && (
-                              <p className="text-xs text-amber-800 dark:text-amber-200">
-                                Đoạn liên quan được chọn theo cụm từ trùng khớp. Hãy kiểm tra lại
-                                trước khi học.
-                              </p>
-                            )}
-                            {selectedQuestion.source_selection === "cited_paragraphs" && (
-                              <p className="text-xs text-muted-foreground">
-                                Gia sư chỉ nhận các đoạn được nêu đích danh trong câu hỏi.
-                              </p>
-                            )}
-                            {selectedQuestion.ideas.length > 0 && (
-                              <div className="space-y-2 border-t pt-4">
-                                <h4 className="text-sm font-semibold">Các ý nhỏ</h4>
-                                <div className="flex flex-wrap gap-2">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant={
-                                      selectedId === selectedQuestion.id ? "default" : "outline"
-                                    }
-                                    onClick={() => selectQuestion(selectedQuestion)}
+                                  <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
+                                    01 · Yêu cầu cần làm
+                                  </h4>
+                                  <p className="mt-3 max-w-prose whitespace-pre-wrap text-base font-medium leading-7 text-foreground">
+                                    {formatProse(selectedQuestion.task)}
+                                  </p>
+                                </section>
+                              ) : (
+                                <p className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+                                  Tài liệu này không có câu hỏi tường minh. Nội dung gốc được giữ
+                                  nguyên bên dưới để em đọc và đặt câu hỏi học tập.
+                                </p>
+                              )}
+                              {selectedIdea && (
+                                <section
+                                  className="rounded-lg border border-primary/30 p-4"
+                                  aria-label="Ý nhỏ đang chọn"
+                                >
+                                  <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
+                                    Ý {selectedIdea.label} đang chọn
+                                  </h4>
+                                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7">
+                                    {selectedIdea.text}
+                                  </p>
+                                </section>
+                              )}
+                              {selectedQuestion.materials && (
+                                <section
+                                  aria-label="Ngữ liệu đi kèm"
+                                  className="rounded-lg border bg-muted/30 p-4 sm:p-5"
+                                >
+                                  <h4 className="text-xs font-bold uppercase tracking-wider text-foreground/70">
+                                    {selectedQuestion.task
+                                      ? "02 · Ngữ liệu đi kèm"
+                                      : "Nội dung tài liệu"}
+                                  </h4>
+                                  {selectedQuestion.task && (
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      Dùng để phân tích hoặc làm dẫn chứng; đây không phải yêu cầu
+                                      cần trả lời.
+                                    </p>
+                                  )}
+                                  <div
+                                    className="mt-4 min-w-0 rounded-md border bg-background p-4"
+                                    aria-label="Nội dung ngữ liệu riêng"
                                   >
-                                    Toàn câu
-                                  </Button>
-                                  {selectedQuestion.ideas.map((idea) => (
+                                    {classifyTextLayout(
+                                      selectedQuestion.materials,
+                                      selectedQuestion.task || selectedQuestion.text,
+                                    ) === "poetry" ? (
+                                      <p className="whitespace-pre-wrap break-words text-sm leading-7">
+                                        {selectedQuestion.materials}
+                                      </p>
+                                    ) : (
+                                      <div className="space-y-4">
+                                        {splitProseParagraphs(selectedQuestion.materials).map(
+                                          (paragraph, index) => (
+                                            <p
+                                              key={index}
+                                              className="w-full break-words text-sm leading-7"
+                                            >
+                                              {paragraph}
+                                            </p>
+                                          ),
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </section>
+                              )}
+                              {sharedParagraphs.length > 0 && (
+                                <details className="group rounded-lg border bg-background p-4">
+                                  <summary className="cursor-pointer text-sm font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+                                    03 · Đọc ngữ liệu chung của phần này ({sharedParagraphs.length}{" "}
+                                    mục)
+                                  </summary>
+                                  <p className="mt-2 text-xs text-muted-foreground">
+                                    Các đoạn liên quan được hiển thị riêng để em đọc và đối chiếu
+                                    với câu hỏi.
+                                  </p>
+                                  <div
+                                    className={sourceParagraphListClass(sharedSourceLayout)}
+                                    aria-label={`Ngữ liệu của ${selectedPart.title}`}
+                                  >
+                                    {sharedParagraphs.map((paragraph) => {
+                                      const marker = /^\((\d{1,2})\)\s*/.exec(paragraph.text);
+                                      const content = marker
+                                        ? paragraph.text.slice(marker[0].length)
+                                        : paragraph.text;
+                                      return (
+                                        <div
+                                          key={paragraph.id}
+                                          className="w-full min-w-0 rounded-lg border border-l-2 border-l-primary/40 bg-muted/20 p-4"
+                                        >
+                                          {marker && (
+                                            <p className="mb-1 text-xs font-bold text-primary">
+                                              Đoạn {marker[1]}
+                                            </p>
+                                          )}
+                                          <p
+                                            className={`break-words text-sm leading-7 text-foreground ${sharedSourceLayout === "poetry" ? "whitespace-pre-wrap" : "w-full"}`}
+                                          >
+                                            {sharedSourceLayout === "poetry"
+                                              ? content
+                                              : formatProse(content)}
+                                          </p>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </details>
+                              )}
+                              {selectedQuestion.source_selection === "matched_phrase" && (
+                                <p className="text-xs text-amber-800 dark:text-amber-200">
+                                  Đoạn liên quan được chọn theo cụm từ trùng khớp. Hãy kiểm tra lại
+                                  trước khi học.
+                                </p>
+                              )}
+                              {selectedQuestion.source_selection === "cited_paragraphs" && (
+                                <p className="text-xs text-muted-foreground">
+                                  Gia sư chỉ nhận các đoạn được nêu đích danh trong câu hỏi.
+                                </p>
+                              )}
+                              {selectedQuestion.ideas.length > 0 && (
+                                <div className="space-y-2 border-t pt-4">
+                                  <h4 className="text-sm font-semibold">Các ý nhỏ</h4>
+                                  <div className="flex flex-wrap gap-2">
                                     <Button
-                                      key={idea.id}
                                       type="button"
                                       size="sm"
-                                      variant={selectedId === idea.id ? "default" : "outline"}
-                                      onClick={() => selectIdea(idea)}
+                                      variant={
+                                        selectedId === selectedQuestion.id ? "default" : "outline"
+                                      }
+                                      onClick={() => selectQuestion(selectedQuestion)}
                                     >
-                                      Ý {idea.label}
+                                      Toàn câu
                                     </Button>
-                                  ))}
+                                    {selectedQuestion.ideas.map((idea) => (
+                                      <Button
+                                        key={idea.id}
+                                        type="button"
+                                        size="sm"
+                                        variant={selectedId === idea.id ? "default" : "outline"}
+                                        onClick={() => selectIdea(idea)}
+                                      >
+                                        Ý {idea.label}
+                                      </Button>
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                          </article>
-                        )}
-                        {!selectedQuestion && selectedBlock && (
-                          <article className="min-w-0 space-y-4 rounded-xl border bg-background p-4 shadow-sm sm:p-6">
-                            <header className="border-b pb-4">
-                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                Khối nội dung đã chọn · Trang {selectedBlock.page}
+                              )}
+                            </article>
+                          )}
+                          {!selectedQuestion && selectedBlock && (
+                            <article className="min-w-0 space-y-4 rounded-xl border bg-background p-4 shadow-sm sm:p-6">
+                              <header className="border-b pb-4">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  Khối nội dung đã chọn · Trang {selectedBlock.page}
+                                </p>
+                                <h3 className="mt-1 text-xl font-semibold">
+                                  Sẵn sàng học cùng Trợ lý ảo
+                                </h3>
+                              </header>
+                              <section className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
+                                  Nội dung làm điểm bắt đầu
+                                </h4>
+                                <p className="mt-3 whitespace-pre-wrap text-sm leading-7">
+                                  {selectedBlock.text}
+                                </p>
+                              </section>
+                              <p className="text-sm text-muted-foreground">
+                                Em có thể kiểm tra và sửa nội dung trong bản tách trước khi bắt đầu.
                               </p>
-                              <h3 className="mt-1 text-xl font-semibold">Bắt đầu với trợ lý</h3>
-                            </header>
-                            <section className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-                              <h4 className="text-xs font-bold uppercase tracking-wider text-primary">
-                                Nội dung làm điểm bắt đầu
-                              </h4>
-                              <p className="mt-3 whitespace-pre-wrap text-sm leading-7">
-                                {selectedBlock.text}
-                              </p>
-                            </section>
-                            <p className="text-sm text-muted-foreground">
-                              Em có thể kiểm tra và sửa nội dung trong bản tách trước khi bắt đầu.
-                            </p>
-                          </article>
-                        )}
+                            </article>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </section>
-                )}
-                {structure && !needsSourceChoice && selectedIds.length > 0 && (
-                  <Button
-                    className="w-full"
-                    type="submit"
-                    disabled={busy || Boolean(startReason)}
-                    aria-describedby={startReason ? "start-learning-reason" : undefined}
-                  >
-                    {busy
-                      ? "Đang xử lý…"
-                      : selectedIds.length > 1
-                        ? `Bắt đầu ${selectedIds.length} câu`
-                        : "Bắt đầu"}
+                    </section>
+                  )}
+                  {structure && selectedIds.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      disabled={busy || Boolean(startReason)}
+                      onClick={() =>
+                        void confirm(needsSourceChoice ? "reference" : inputMode, false)
+                      }
+                    >
+                      Lưu đề để học sau
+                    </Button>
+                  )}
+                  {structure && !needsSourceChoice && selectedIds.length > 0 && (
+                    <Button
+                      className="w-full"
+                      type="submit"
+                      disabled={busy || Boolean(startReason)}
+                      aria-describedby={startReason ? "start-learning-reason" : undefined}
+                    >
+                      {busy
+                        ? "Đang xử lý…"
+                        : selectedIds.length > 1
+                          ? `Bắt đầu học ${selectedIds.length} câu`
+                          : "Bắt đầu học"}
+                    </Button>
+                  )}
+                  {structure && !needsSourceChoice && startReason && (
+                    <p id="start-learning-reason" className="text-sm text-muted-foreground">
+                      {startReason}
+                    </p>
+                  )}
+                  <Button type="button" variant="ghost" onClick={() => setStep(2)}>
+                    Quay lại kiểm tra nội dung
                   </Button>
-                )}
-                {structure && !needsSourceChoice && startReason && (
-                  <p id="start-learning-reason" className="text-sm text-muted-foreground">
-                    {startReason}
-                  </p>
-                )}
+                </div>
               </fieldset>
             </form>
           </Panel>
         </TabsContent>
-        <div className="xl:col-span-3 space-y-4">
-          <details className="rounded-lg border bg-card p-4 sm:p-5">
-            <summary className="cursor-pointer text-sm font-semibold">
-              Lịch sử tài liệu · {documentsQuery.data?.length ?? 0}
-            </summary>
-            <div className="mt-4">
-              {documentsQuery.isPending ? (
-                <p className="text-sm text-muted-foreground">Đang tải lịch sử…</p>
-              ) : documentsQuery.error ? (
-                <ApiState
-                  loading={false}
-                  error={documentsQuery.error}
-                  retry={documentsQuery.refetch}
-                />
-              ) : documentsQuery.data?.length ? (
-                <div className="space-y-3">
-                  {documentsQuery.data.map((document) => (
-                    <article
-                      key={document.document_id}
-                      className="rounded-xl border bg-background p-4 sm:p-5"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="truncate font-semibold">{document.title}</h3>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {document.filename} · {document.page_count || "—"} trang ·{" "}
-                            {document.part_count} phần · {document.question_count} câu
-                          </p>
-                        </div>
-                        {document.status === "failed" && (
-                          <span className="rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
-                            Không đọc được
-                          </span>
-                        )}
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="mt-3"
-                        onClick={() => void openDocumentDetail(document.document_id)}
-                      >
-                        Xem bản tách
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="ml-2 mt-3"
-                        disabled={busy || document.status !== "needs_review"}
-                        onClick={() => void restoreDocument(document.document_id)}
-                      >
-                        Tiếp tục với tài liệu này
-                      </Button>
-                      {document.status === "failed" && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="ml-2 mt-3"
-                          disabled={busy}
-                          onClick={() => void restoreDocument(document.document_id, true)}
-                        >
-                          Thử xử lý lại
-                        </Button>
-                      )}
-                      {["uploaded", "processing"].includes(document.status) && (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          Đang xử lý; bản tách sẽ cập nhật khi hoàn tất.
-                        </p>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Chưa có tài liệu nào được tách.</p>
-              )}
-            </div>
-          </details>
-        </div>
       </div>
-      <Dialog open={Boolean(contentModalQuestion)} onOpenChange={(open) => !open && setContentModalQuestion(null)}>
-        <DialogContent className="flex max-h-[88dvh] w-[calc(100%-24px)] max-w-4xl flex-col gap-0 overflow-hidden p-0">
-          <DialogHeader className="shrink-0 border-b px-6 py-5 pr-14">
-            <DialogTitle>Nội dung liên quan · {contentModalQuestion?.label ?? "Câu hỏi"}</DialogTitle>
-            <DialogDescription>
-              Ngữ liệu, hình ảnh và phần tham khảo được tách khỏi danh sách câu hỏi.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
-            {contentModalQuestion?.materials && (
-              <section className="rounded-lg border bg-muted/20 p-4">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Ngữ liệu</h3>
-                <div className="mt-3 space-y-4 text-sm leading-7">
-                  {classifyTextLayout(contentModalQuestion.materials, contentModalQuestion.task || contentModalQuestion.text) === "poetry"
-                    ? <p className="whitespace-pre-wrap break-words">{contentModalQuestion.materials}</p>
-                    : splitProseParagraphs(contentModalQuestion.materials).map((paragraph, index) => (
-                        <p key={index}>{paragraph}</p>
-                      ))}
-                </div>
-              </section>
-            )}
-            {modalVisuals.length > 0 && (
-              <section className="rounded-lg border p-4">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Hình ảnh liên quan</h3>
-                <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                  {modalVisuals.map((visual) => (
-                    <figure key={visual.id} className="rounded-lg border bg-muted/10 p-3">
-                      {documentId && <img src={`/api/documents/${documentId}/visuals/${visual.id}/image`} alt={visual.description || `Hình ${visual.page}`} className="max-h-[420px] w-full rounded object-contain" loading="lazy" />}
-                      <figcaption className="mt-2 text-xs text-muted-foreground">Trang {visual.page} · {visual.kind}</figcaption>
-                    </figure>
-                  ))}
-                </div>
-              </section>
-            )}
-            {!contentModalQuestion?.materials && modalVisuals.length === 0 && (
-              <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Câu này không có ngữ liệu hoặc hình ảnh riêng.</p>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="flex max-h-[90dvh] w-[calc(100%-24px)] max-w-6xl flex-col gap-0 overflow-hidden p-0">
+        <DialogContent className="learning-theme flex max-h-[90dvh] w-[calc(100%-24px)] max-w-6xl flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="shrink-0 border-b px-6 py-5 pr-14">
             <DialogTitle>Bản tách nội dung</DialogTitle>
             <DialogDescription>
@@ -1680,7 +1506,7 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
             {detailEditable && (
               <p className="text-xs text-muted-foreground">
                 Sửa yêu cầu và ngữ liệu; đoạn dùng chung cập nhật ở các câu liên quan. Chọn “Lưu bản
-                đã kiểm tra” ngoài cửa sổ này để lưu vào lịch sử, hoặc bắt đầu học để tự lưu.
+                đã kiểm tra” ngoài cửa sổ này để lưu cùng tài liệu, hoặc bắt đầu học để tự lưu.
               </p>
             )}
           </DialogHeader>
@@ -1757,6 +1583,33 @@ function DocumentWorkspace({ active, onActivate }: { active: boolean; onActivate
                         </p>
                       )}
                     </section>
+                    {detailVisuals.length > 0 && detailDocument && (
+                      <section className="rounded-xl border p-5">
+                        <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Ảnh đã tách cho câu này ({detailVisuals.length})
+                        </h4>
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                          {detailVisuals.map((visual) => {
+                            const imageUrl = `/api/documents/${detailDocument.document_id}/visuals/${visual.id}/image`;
+                            return (
+                              <figure key={visual.id} className="rounded-lg border bg-muted/10 p-3">
+                                <a href={imageUrl} target="_blank" rel="noreferrer">
+                                  <img
+                                    src={imageUrl}
+                                    alt={visual.description || `${detailQuestion.label}, trang ${visual.page}`}
+                                    className="max-h-[420px] w-full rounded object-contain"
+                                    loading="lazy"
+                                  />
+                                </a>
+                                <figcaption className="mt-2 text-xs text-muted-foreground">
+                                  Trang {visual.page} · {visual.question_label || detailQuestion.label}
+                                </figcaption>
+                              </figure>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    )}
                     <section className="rounded-xl border p-5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">

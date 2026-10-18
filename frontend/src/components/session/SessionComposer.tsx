@@ -55,7 +55,7 @@ export function SessionComposer({
         {notice}
         <div className="learning-composer-labels mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <label htmlFor="learning-answer" className="text-sm font-medium">
-            {essay ? "Bài làm cuối phiên" : "Suy nghĩ của em"}
+            {essay ? "Câu trả lời cuối phiên" : "Suy nghĩ của em"}
           </label>
           {onFinish && (
             <Button
@@ -76,7 +76,7 @@ export function SessionComposer({
             value={value}
             disabled={disabled}
             maxLength={essay ? 50000 : 10000}
-            placeholder={essay ? "Viết bài làm của em…" : "Viết suy nghĩ của em tại đây..."}
+            placeholder={essay ? "Trình bày kết quả và cách em suy luận…" : "Viết suy nghĩ của em tại đây..."}
             aria-describedby="learning-composer-help"
             className="learning-composer-input min-h-24 max-h-[200px] resize-none rounded-lg border-0 px-3 py-2.5 leading-relaxed shadow-none focus-visible:ring-0"
             onChange={(event) => onChange(event.target.value)}
@@ -166,7 +166,7 @@ export function SessionComposer({
         >
           <span>
             {essay
-              ? "Ít nhất 20 ký tự · Bản nháp được giữ trên trình duyệt này."
+              ? "Ít nhất 20 ký tự · Bản nháp tự lưu vào tài khoản khi có kết nối."
               : "Em có thể trả lời theo cách hiểu của mình."}
           </span>
           <span className="hidden sm:inline">Ctrl + Enter để gửi</span>

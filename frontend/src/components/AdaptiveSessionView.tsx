@@ -3,12 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { api, ApiError, type Session } from "@/lib/api";
-import { useAuth } from "@/components/AuthProvider";
-import { AssessmentReport } from "@/components/AssessmentReport";
+import { api, ApiError, type HintDifficulty, type Session } from "@/lib/api";
+import { useSessionDraft } from "@/hooks/use-session-draft";
 import { SessionWorkspace } from "@/components/session/SessionWorkspace";
 import { SessionConversation } from "@/components/session/SessionConversation";
 import { SessionComposer } from "@/components/session/SessionComposer";
+import { HintCheckIn } from "@/components/session/HintCheckIn";
 import {
   SessionPendingRequest,
   SessionRequestError,
@@ -23,34 +23,32 @@ export function AdaptiveSessionView({
   session: Session;
   queryKey: string[];
 }) {
-  const { user } = useAuth();
   const client = useQueryClient();
   const navigate = useNavigate();
-  const draftKey = `socratic:${user?.id}:draft:${session.id}`;
-  const essayKey = `socratic:${user?.id}:essay:${session.id}`;
   const pending = session.pending_action;
-  const [draft, setDraft] = useState(
-    () => sessionStorage.getItem(draftKey) || (pending?.action === "message" ? pending.text : ""),
-  );
-  const [essay, setEssay] = useState(
-    () =>
-      sessionStorage.getItem(essayKey) ||
-      (pending?.action === "submit" ? pending.text : session.essay),
-  );
+  const draftState = useSessionDraft(session);
+  const { draft, essay, setDraft, setEssay } = draftState;
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<Action | null>(null);
   const [error, setError] = useState("");
   const [failedAction, setFailedAction] = useState<Action>("message");
   const inFlight = useRef(false);
-  const request = useRef<{ action: Action; text: string; key: string; session: Session } | null>(
-    null,
+  const request = useRef<{
+    action: Action;
+    text: string;
+    key: string;
+    session: Session;
+    difficulty?: HintDifficulty | undefined;
+  } | null>(null);
+  const answers = session.turns.filter(
+    (t) => t.kind === "student" && (!t.purpose || t.purpose === "answer"),
   );
-  const answers = session.turns.filter((t) => t.kind === "student" && t.purpose !== "source");
-  const blocked = busy || Boolean(pending);
+  const blocked = busy || Boolean(pending) || !draftState.ready || draftState.hasConflict;
   const selectItem = async (itemId: string) => {
     if (blocked || itemId === session.assignment.active_item_id) return;
     setBusy(true);
     try {
+      if (!(await draftState.save())) return;
       const selected = await api.selectSessionItem(session.id, itemId);
       client.setQueryData(["session", selected.id], selected);
       await navigate({ to: "/phien-hoc", search: { session: selected.id } });
@@ -69,8 +67,11 @@ export function AdaptiveSessionView({
     void client.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "session" });
   };
 
-  const perform = async (action: Action, retry = false) => {
+  const perform = async (action: Action, retry = false, difficulty?: HintDifficulty) => {
     if (inFlight.current) return;
+    const selectedDifficulty = retry
+      ? (pending?.difficulty ?? request.current?.difficulty)
+      : difficulty;
     const text =
       retry && pending
         ? pending.text
@@ -80,32 +81,47 @@ export function AdaptiveSessionView({
             ? essay.trim()
             : "";
     if (retry && pending)
-      request.current = { action, text, key: pending.client_message_id, session };
-    else if (!request.current || request.current.action !== action || request.current.text !== text)
-      request.current = { action, text, key: crypto.randomUUID(), session };
+      request.current = {
+        action,
+        text,
+        key: pending.client_message_id,
+        session,
+        difficulty: pending.difficulty ?? undefined,
+      };
+    else if (
+      !request.current ||
+      request.current.action !== action ||
+      request.current.text !== text ||
+      request.current.difficulty !== selectedDifficulty
+    )
+      request.current = {
+        action,
+        text,
+        key: crypto.randomUUID(),
+        session,
+        difficulty: selectedDifficulty,
+      };
     const operation = request.current;
     inFlight.current = true;
     setBusy(true);
     setBusyAction(action);
     setError("");
     try {
+      if (!pending && !(await draftState.save())) return;
       const saved =
         action === "message"
           ? await api.message(operation.session, text, operation.key)
           : action === "hint"
-            ? await api.hint(operation.session, operation.key)
+            ? await api.hint(operation.session, operation.key, operation.difficulty)
             : action === "submit"
               ? await api.submit(operation.session, text, operation.key)
               : await api.action(operation.session, action, operation.key);
+      draftState.committed(saved, action);
       saveSession(saved);
       request.current = null;
-      if (action === "message") {
-        setDraft("");
-        sessionStorage.removeItem(draftKey);
-      }
       if (action === "submit") {
-        sessionStorage.removeItem(essayKey);
         toast.success("Đã lưu bài làm và báo cáo cuối phiên");
+        await navigate({ to: "/", search: { lesson: session.assignment_id, view: "results" } });
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) request.current = null;
@@ -129,6 +145,9 @@ export function AdaptiveSessionView({
     <SessionWorkspace
       session={session}
       activity={blocked}
+      navigationBusy={busy && busyAction === null}
+      onSaveDraft={busy || pending ? async () => true : draftState.save}
+      draftStatus={draftState.feedback}
       onSelectItem={(itemId) => void selectItem(itemId)}
       composer={
         !session.submitted ? (
@@ -138,10 +157,8 @@ export function AdaptiveSessionView({
             onChange={(value) => {
               if (session.done) {
                 setEssay(value);
-                sessionStorage.setItem(essayKey, value);
               } else {
                 setDraft(value);
-                sessionStorage.setItem(draftKey, value);
               }
             }}
             disabled={blocked}
@@ -150,19 +167,30 @@ export function AdaptiveSessionView({
             onSend={() => void perform(session.done ? "submit" : "message")}
             {...(!session.done
               ? {
-                  onHint: () => void perform("hint"),
+                  ...(!session.support_state?.needs_check_in
+                    ? { onHint: () => void perform("hint") }
+                    : {}),
                   hintBusy: busyAction === "hint",
                   ...(answers.length > 0 ? { onFinish: () => void perform("finish") } : {}),
                 }
               : { onContinue: () => void perform("continue") })}
             notice={
-              error && !pending ? (
-                <SessionRequestError
-                  message={error}
-                  disabled={busy}
-                  onRetry={() => void perform(failedAction)}
-                />
-              ) : undefined
+              <>
+                {!session.done && session.support_state?.needs_check_in && (
+                  <HintCheckIn
+                    question={session.support_state.question_text}
+                    disabled={blocked}
+                    onSelect={(difficulty) => void perform("hint", false, difficulty)}
+                  />
+                )}
+                {error && !pending ? (
+                  <SessionRequestError
+                    message={error}
+                    disabled={busy}
+                    onRetry={() => void perform(failedAction, true)}
+                  />
+                ) : undefined}
+              </>
             }
           />
         ) : undefined
@@ -183,23 +211,23 @@ export function AdaptiveSessionView({
           {busyAction === "submit"
             ? "Đang đối chiếu bài làm và tính điểm…"
             : busyAction === "hint"
-              ? "Gia sư đang chuẩn bị gợi ý…"
-              : "Gia sư đang xử lý…"}
+              ? "Trợ lý đang chuẩn bị gợi ý…"
+              : "Trợ lý đang xử lý…"}
         </p>
       )}
       {session.done && !session.submitted && (
         <section className="rounded-xl border bg-card p-5">
-          <h2 className="font-semibold">Tự tổng hợp bài làm</h2>
+          <h2 className="font-semibold">Tự tổng hợp câu trả lời</h2>
           <p className="mt-2 text-sm leading-7 text-muted-foreground">
-            Viết kết luận, câu trả lời đọc hiểu hoặc bài nghị luận bằng lời của em. Báo cáo sẽ đối
-            chiếu cả đối thoại và phần tổng hợp này; thiếu bằng chứng sẽ chưa có điểm tổng.
+            Trình bày câu trả lời cuối cùng bằng lời của em; nêu kết quả và những căn cứ hoặc bước
+            lập luận chính phù hợp với đề. Báo cáo sẽ đối chiếu phần này với cuộc trao đổi; nếu
+            chưa đủ bằng chứng, hệ thống chưa thể đưa ra điểm tổng.
           </p>
         </section>
       )}
-      {session.assessment && <AssessmentReport report={session.assessment} />}
       {session.submitted && (
         <details data-session-complete className="rounded-xl border bg-card p-4 text-sm">
-          <summary className="cursor-pointer font-medium">Bài viết cuối phiên</summary>
+          <summary className="cursor-pointer font-medium">Câu trả lời cuối phiên</summary>
           <p className="mt-3 whitespace-pre-wrap break-words leading-7">{session.essay}</p>
         </details>
       )}

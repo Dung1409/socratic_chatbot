@@ -13,10 +13,8 @@ async function openInput(page: Page, upload = false) {
   );
   await page.getByRole("button", { name: "Tạo tài khoản", exact: true }).click();
   expect((await registration).status()).toBe(201);
-  await expect(
-    page.getByRole("heading", { name: "Hôm nay em sẽ suy nghĩ sâu hơn một bậc." }),
-  ).toBeVisible();
-  await page.goto("/de-bai");
+  await expect(page.getByRole("heading", { name: "Bài học của tôi" })).toBeVisible();
+  await page.goto(upload ? "/de-bai?tab=documents" : "/de-bai?tab=quick");
   if (upload) await page.getByRole("tab", { name: "Tải tài liệu", exact: true }).click();
 }
 
@@ -73,7 +71,7 @@ test("pasted task starts immediately without a title or parsing step and retains
   expect(assignment.title).toBe(prompt);
   expect(assignment.items[0].prompt).toBe(prompt);
   expect(assignment.items[0].context).toContain(materials);
-  await expect(page).toHaveURL(/phien-hoc\?assignment=/);
+  await expect(page).toHaveURL(/phien-hoc\?session=/);
   expect(submits).toBe(1);
 });
 
@@ -86,32 +84,34 @@ test("text file keeps shared material after editing and reopens the reviewed ver
   await page
     .getByLabel("Chọn tệp PDF, Word hoặc văn bản")
     .setInputFiles({ name: "de-doc-hieu.txt", mimeType: "text/plain", buffer: Buffer.from(text) });
+  await expect(page.getByLabel("Cảnh báo cần kiểm tra")).toBeVisible();
+  await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   await expect(page.getByRole("region", { name: "Chọn câu để học" })).toBeVisible();
   await expect(page.getByText("Chọn câu em muốn học.", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Cảnh báo cần kiểm tra")).toBeVisible();
   await page.getByRole("checkbox", { name: "Chọn Câu 1", exact: true }).check();
+  await page.getByRole("button", { name: "Quay lại kiểm tra nội dung" }).click();
   await page.getByText("Chỉnh sửa tài liệu", { exact: true }).click();
-  await page.getByRole("button", { name: "Sửa bản tách" }).click();
+  await page.getByRole("button", { name: "Sửa bản tách", exact: true }).click();
   await page
     .getByRole("dialog")
     .getByRole("textbox", { name: /^Sửa yêu cầu/ })
     .fill("Giải thích ý chính của văn bản bằng lời của em.");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Lưu thay đổi", exact: true }).click();
-  await expect(
-    page.getByText("Đã lưu bản đã kiểm tra vào lịch sử tài liệu", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Đã lưu nội dung đã kiểm tra", { exact: true })).toBeVisible();
   await page.evaluate(() => sessionStorage.clear());
-  await page.reload();
-  await page.getByText(/^Lịch sử tài liệu ·/).click();
-  await page.getByRole("button", { name: "Tiếp tục với tài liệu này" }).click();
+  await page.goto("/");
+  await page.getByRole("link", { name: "Tiếp tục kiểm tra", exact: true }).click();
+  await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   await expect(
     page.getByText("Giải thích ý chính của văn bản bằng lời của em.", { exact: true }).first(),
   ).toBeVisible();
+  if (await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).isVisible())
+    await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   const request = page.waitForRequest(
     (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
   );
-  await page.getByRole("button", { name: "Bắt đầu" }).click();
+  await page.getByRole("button", { name: "Bắt đầu học" }).click();
   const context = (await request).postDataJSON().items[0].context;
   expect(context).toContain("Đọc sách giúp chúng ta hiểu nhiều góc nhìn khác nhau.");
   expect(context).not.toContain("Không gửi lời giải này");
@@ -138,14 +138,17 @@ test("reordering images invalidates the previous extraction and requires reading
     { name: "first.png", mimeType: "image/png", buffer: png },
     { name: "second.png", mimeType: "image/png", buffer: png },
   ]);
-  await expect(page.getByRole("button", { name: /^Bắt đầu/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Bắt đầu học/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Xác nhận thứ tự & đọc chữ" }).click();
-  await expect(page.getByRole("button", { name: "Bắt đầu" })).toBeEnabled();
+  await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
+  await expect(page.getByRole("button", { name: "Bắt đầu học" })).toBeEnabled();
+  await page.getByRole("button", { name: "1. Tải tài liệu", exact: true }).click();
   await page.getByText("Kiểm tra thứ tự trang · 2 ảnh", { exact: true }).click();
   await page.getByRole("button", { name: "Đưa ảnh 2 lên" }).click();
   await expect(page.getByRole("textbox", { name: "Văn bản đọc từ tài liệu" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Bắt đầu/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Bắt đầu học/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Xác nhận thứ tự & đọc chữ" }).click();
+  await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   await expect(
     page.getByText("Yêu cầu từ thứ tự ảnh đã thay đổi.", { exact: true }).first(),
   ).toBeVisible();
@@ -163,6 +166,7 @@ test("reference document offers a direct choice instead of requiring a mode drop
       "Đọc sách mở ra nhiều góc nhìn và giúp mỗi người hiểu cuộc sống sâu sắc hơn.",
     ),
   });
+  await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   await expect(page.getByRole("region", { name: "Chọn cách học tài liệu" })).toBeVisible();
   await expect(page.getByRole("combobox")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Nhập thêm yêu cầu" })).toBeVisible();
@@ -174,6 +178,8 @@ test("reference document offers a direct choice instead of requiring a mode drop
     if (width === 390 || width === 1440)
       await page.screenshot({ path: `../artifacts/document-entry-${width}.png`, fullPage: true });
   }
+  if (await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).isVisible())
+    await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   const request = page.waitForRequest(
     (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
   );
@@ -191,9 +197,7 @@ test("a reference document can become a specific task while keeping its material
     mimeType: "text/plain",
     buffer: Buffer.from(materials),
   });
-  await expect(
-    page.getByText("Tài liệu tham khảo · Chưa có câu hỏi", { exact: true }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   await page.getByRole("button", { name: "Nhập thêm yêu cầu" }).click();
   const prompt = "Hãy giải thích lợi ích của việc đọc sách bằng lời của em.";
   await page
@@ -201,10 +205,12 @@ test("a reference document can become a specific task while keeping its material
     .getByRole("textbox", { name: /^Sửa yêu cầu/ })
     .fill(prompt);
   await page.keyboard.press("Escape");
+  if (await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).isVisible())
+    await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
   const request = page.waitForRequest(
     (item) => item.method() === "POST" && item.url().endsWith("/api/learning/assignments"),
   );
-  await page.getByRole("button", { name: "Bắt đầu", exact: true }).click();
+  await page.getByRole("button", { name: "Bắt đầu học", exact: true }).click();
   const item = (await request).postDataJSON().items[0];
   expect(item.prompt).toBe(prompt);
   expect(item.context).toContain(materials);
@@ -233,7 +239,8 @@ test("pending image document can be recovered after a page reload", async ({ pag
   await page.reload();
   ready = true;
   await page.getByRole("button", { name: "Kiểm tra tài liệu đang xử lý" }).click();
-  await expect(page.getByRole("button", { name: "Bắt đầu" })).toBeEnabled();
+  await page.getByRole("button", { name: "Đã kiểm tra, chọn câu" }).click();
+  await expect(page.getByRole("button", { name: "Bắt đầu học" })).toBeEnabled();
   await expect(
     page.getByText("Hãy phân tích vấn đề được nêu trong ảnh.", { exact: true }).first(),
   ).toBeVisible();

@@ -2,7 +2,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCORING_VERSION = "bloom-autonomy-1.0"
+SCORING_VERSION = "bloom-autonomy-2.0"
 DIMENSIONS = {
     "basic": ("Cơ bản · Nhớ – Hiểu", 30),
     "application": ("Vận dụng · Áp dụng – Phân tích", 35),
@@ -25,6 +25,10 @@ Mốc mô tả trong MỖI tầng: 0% đã có cơ hội nhưng chưa đáp ứn
 Có thể chấm giữa các mốc với lý do cụ thể. Đây là hướng dẫn vận hành hóa v1.
 Chưa có cơ hội thể hiện hoặc thiếu ngữ liệu để kiểm chứng: observed=false,
 points=null; không gán 0. Không suy ra năng lực từ bậc câu hỏi đã hỏi.
+AI mới hỏi nhưng học sinh chưa trả lời không đủ để gán 0. Câu hỏi phụ lệch
+khỏi đề không chứng minh đã có cơ hội đánh giá theo đề. Lựa chọn chỗ vướng
+purpose=clarification không phải biểu hiện tư duy để chấm. Một liên tưởng
+ngắn chưa giải thích không tự chứng minh nhận thức về tầm quan trọng của vấn đề.
 Chỉ dùng bằng chứng từ câu trả lời/bài tổng hợp của học sinh, dẫn đúng source_id
 và trích nguyên văn. Không chấm nội dung của AI hoặc ngữ liệu học sinh dán vào
 như suy nghĩ tự hình thành. Phân biệt thành quả sau hỗ trợ và tự lực; không trừ
@@ -83,6 +87,11 @@ def classify(score: Decimal):
     return "Cần Rèn Luyện"
 
 
+def autonomy_factor(hint_count: int) -> Decimal:
+    # Equivalent to 0.3 + 0.7 / (1 + N/7), without rounding N/7 first.
+    return Decimal("0.3") + Decimal("4.9") / (Decimal(7) + hint_count)
+
+
 def build_report(draft: AssessmentDraft, session, essay, model):
     sources = student_sources(session, essay)
     dimensions, total = [], Decimal(0)
@@ -99,7 +108,7 @@ def build_report(draft: AssessmentDraft, session, essay, model):
         dimensions.append({"key": key, "name": name, "maximum": maximum,
                            **assessment.model_dump()})
     n = sum(event["counted_for_autonomy"] for event in session.get("support_events", []))
-    autonomy = max(Decimal("0.3"), Decimal(1) - Decimal("0.1") * n)
+    autonomy = autonomy_factor(n)
     complete = all(item["observed"] for item in dimensions)
     score = total * autonomy if complete else None
     display = lambda value: float(value.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))

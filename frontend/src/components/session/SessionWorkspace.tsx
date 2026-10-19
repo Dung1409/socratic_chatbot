@@ -36,6 +36,8 @@ type Props = {
   onSelectItem?: (itemId: string) => void;
   onSaveDraft?: () => Promise<boolean>;
   navigationBusy?: boolean;
+  assessmentOpen?: boolean;
+  onAssessmentOpenChange?: (open: boolean) => void;
 };
 
 export function SessionWorkspace({
@@ -46,10 +48,14 @@ export function SessionWorkspace({
   onSelectItem,
   onSaveDraft,
   navigationBusy = false,
+  assessmentOpen,
+  onAssessmentOpenChange,
 }: Props) {
   const navigate = useNavigate();
   const [leaving, setLeaving] = useState(false);
   const [resultOpen, setResultOpen] = useState(false);
+  const showAssessment = assessmentOpen ?? resultOpen;
+  const setShowAssessment = onAssessmentOpenChange ?? setResultOpen;
   const siblings = useQuery({
     queryKey: ["sessions"],
     queryFn: api.sessions,
@@ -336,14 +342,18 @@ export function SessionWorkspace({
                 <CheckCircle2 aria-hidden="true" className="size-4" /> Phiên học đã được lưu
               </span>
               {session.assessment && (
-                <Button variant="link" className="h-10 px-0" onClick={() => setResultOpen(true)}>
+                <Button
+                  variant="link"
+                  className="h-10 px-0"
+                  onClick={() => setShowAssessment(true)}
+                >
                   Xem phiếu đánh giá
                 </Button>
               )}
             </div>
           </footer>
         )}
-        <Dialog open={resultOpen} onOpenChange={setResultOpen}>
+        <Dialog open={showAssessment} onOpenChange={setShowAssessment}>
           <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Kết quả {activeItem?.label ?? "câu này"}</DialogTitle>
@@ -351,7 +361,7 @@ export function SessionWorkspace({
             </DialogHeader>
             {session.assessment && <AssessmentReport report={session.assessment} />}
             <DialogFooter>
-              <Button onClick={() => setResultOpen(false)}>Đóng, quay lại đoạn chat</Button>
+              <Button onClick={() => setShowAssessment(false)}>Đóng phiếu đánh giá</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

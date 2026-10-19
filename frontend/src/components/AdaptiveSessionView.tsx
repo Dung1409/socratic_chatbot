@@ -42,6 +42,7 @@ export function AdaptiveSessionView({
   const [error, setError] = useState("");
   const [failedAction, setFailedAction] = useState<Action>("message");
   const [resultNotice, setResultNotice] = useState<{ nextItemId: string | null } | null>(null);
+  const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [switchingQuestion, setSwitchingQuestion] = useState(false);
   const inFlight = useRef(false);
   const request = useRef<{
@@ -168,18 +169,6 @@ export function AdaptiveSessionView({
     }
   };
 
-  const viewQuestionResult = async () => {
-    setResultNotice(null);
-    await navigate({
-      to: "/",
-      search: {
-        lesson: session.assignment_id,
-        view: "results",
-        ...(session.assignment.active_item_id ? { item: session.assignment.active_item_id } : {}),
-      },
-    });
-  };
-
   const goToNextQuestion = async () => {
     if (!resultNotice?.nextItemId || switchingQuestion) return;
     setSwitchingQuestion(true);
@@ -201,6 +190,8 @@ export function AdaptiveSessionView({
         session={session}
         activity={blocked}
         navigationBusy={busy && busyAction === null}
+        assessmentOpen={assessmentOpen}
+        onAssessmentOpenChange={setAssessmentOpen}
         onSaveDraft={busy || pending ? async () => true : draftState.save}
         onSelectItem={(itemId) => void selectItem(itemId)}
         composer={
@@ -286,7 +277,10 @@ export function AdaptiveSessionView({
           </details>
         )}
       </SessionWorkspace>
-      <Dialog open={Boolean(resultNotice)} onOpenChange={(open) => !open && setResultNotice(null)}>
+      <Dialog
+        open={Boolean(resultNotice) && !assessmentOpen}
+        onOpenChange={(open) => !open && setResultNotice(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Đã có kết quả cho câu này</DialogTitle>
@@ -296,7 +290,7 @@ export function AdaptiveSessionView({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:space-x-0">
-            <Button variant="outline" onClick={() => void viewQuestionResult()}>
+            <Button variant="outline" onClick={() => setAssessmentOpen(true)}>
               Xem kết quả câu này
             </Button>
             {resultNotice?.nextItemId ? (

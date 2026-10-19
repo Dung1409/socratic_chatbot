@@ -132,23 +132,29 @@ export function AdaptiveSessionView({
       saveSession(saved);
       request.current = null;
       if (action === "submit") {
-        let nextItemId =
-          session.assignment.items?.find((item) => item.id !== session.assignment.active_item_id)
-            ?.id ?? null;
+        const items = session.assignment.items ?? [];
+        const activeItemId = session.assignment.active_item_id;
+        let completedIds = new Set<string>(activeItemId ? [activeItemId] : []);
         try {
           const savedSessions = await api.sessions();
-          const completedIds = new Set(
+          completedIds = new Set(
             savedSessions
               .filter((entry) => entry.assignment_id === session.assignment_id && entry.submitted)
-              .map((entry) => entry.assignment.active_item_id),
+              .map((entry) => entry.assignment.active_item_id)
+              .filter((itemId): itemId is string => Boolean(itemId)),
           );
-          nextItemId =
-            session.assignment.items?.find(
-              (item) => item.id !== session.assignment.active_item_id && !completedIds.has(item.id),
-            )?.id ?? null;
+          if (activeItemId) completedIds.add(activeItemId);
         } catch {
           // The report is already saved; still let the learner view it if listing sessions fails.
         }
+
+        const currentIndex = items.findIndex((item) => item.id === activeItemId);
+        const allCompleted = items.length > 0 && items.every((item) => completedIds.has(item.id));
+        const nextItemId = allCompleted
+          ? null
+          : currentIndex >= 0 && currentIndex < items.length - 1
+            ? items[currentIndex + 1]?.id ?? null
+            : items.find((item) => !completedIds.has(item.id))?.id ?? null;
         setResultNotice({ nextItemId });
       }
     } catch (error) {

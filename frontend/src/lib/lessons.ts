@@ -1,12 +1,12 @@
 import type { Assignment, DocumentHistoryItem, Session } from "./api";
 
-export type LessonFilter = "all" | "review" | "new" | "active" | "submitted";
+export const lessonFilterValues = ["all", "review", "new", "active", "submitted"] as const;
+export type LessonFilter = (typeof lessonFilterValues)[number];
 export const lessonFilters = [
   ["all", "Tất cả"],
   ["review", "Cần kiểm tra"],
   ["new", "Chưa bắt đầu"],
   ["active", "Đang học"],
-  ["submitted", "Đã nộp"],
 ] as const;
 
 export function readableLessonTitle(title: string): string {

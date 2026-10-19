@@ -117,10 +117,20 @@ class OpenAITutor:
 
     @staticmethod
     def _study_context(assignment):
-        """Only the selected question enters the model, not sibling item contexts."""
+        """Only the selected question and its own visual context enter the model."""
         keys = ("title", "prompt", "task_type", "subject", "question_type",
                 "source_text", "active_item_id")
-        return {key: assignment[key] for key in keys if key in assignment}
+        context = {key: assignment[key] for key in keys if key in assignment}
+        if assignment.get("active_item_id"):
+            active = next((item for item in assignment.get("items", [])
+                           if item.get("id") == assignment["active_item_id"]), None)
+            if active and active.get("label"):
+                context["active_item_label"] = active["label"]
+            # OCR for an image assignment can contain neighboring questions. The selected
+            # question crop is sent separately by _images_for, so omit the mixed OCR text.
+            if assignment.get("visual_refs"):
+                context.pop("source_text", None)
+        return context
 
     def _call(self, schema, instruction, context, assessment=False, model=None, images=None):
         if not self.configured:
@@ -155,7 +165,10 @@ class OpenAITutor:
 
     def plan(self, assignment):
         _, guidance = tutor_profile(assignment)
-        plan = self._call(LessonPlan, "Phân tích đề, lập mục tiêu bằng lời dễ hiểu và câu hỏi mở đầu. "
+        plan = self._call(LessonPlan, "Use only the active question in assignment.prompt and "
+                          "active_item_label. Ignore sibling questions even if they appear "
+                          "in source material. Do not call this the first question unless its active label "
+                          "says Câu 1. Never preview or reveal another question. " + "Phân tích đề, lập mục tiêu bằng lời dễ hiểu và câu hỏi mở đầu. "
                           "Không chấm điểm, không đưa hỗ trợ bổ sung ở lượt mở đầu. "
                           "Phân loại task_type theo yêu cầu thực tế; môn chưa có loại riêng dùng other.\n"
                           + guidance, self._study_context(assignment),
@@ -169,9 +182,20 @@ class OpenAITutor:
         anchor = support_context(session)
         context = {"assignment": self._study_context(session["assignment"]), "plan": session["plan"],
                    "turns": session["turns"], "action": action, "support_context": anchor}
-        result = self._call(TutorReply, "Phản hồi thích ứng cho lượt mới nhất. "
-                          + ("Học sinh yêu cầu gợi ý: đưa support có reason, hoặc source_request nếu thiếu ngữ liệu."
-                             if action == "hint" else "Đọc kỹ lập luận mới nhất trước khi chọn câu hỏi tiếp theo.")
+        result = self._call(TutorReply,
+                          "Use only the active question in assignment.prompt. Never discuss, preview, "
+                          "hint at, or ask about a sibling question. Do not announce or describe the "
+                          "next question before the current question has been submitted and its report "
+                          "saved. Override any general readiness threshold: do not wait to demonstrate "
+                          "all Bloom dimensions. If the latest student answer correctly answers the "
+                          "active question and gives a reasonable explanation, return kind=ready in this "
+                          "same response and ask the student to summarize this question. The UI opens "
+                          "the summary composer automatically for kind=ready; the student must not need "
+                          "to press a finish button. After the report is saved, the app changes questions "
+                          "and the next opening may discuss only the newly active question. If the answer "
+                          "is wrong or missing a material part, keep tutoring the active question. "
+                          + ("The student requested a hint: provide appropriate support or request missing source material. "
+                             if action == "hint" else "Read the latest reasoning before choosing a Socratic follow-up for the active question.")
                           + "\n" + guidance,
                           context, model=session["model"],
                           images=self._images_for(session["assignment"]))

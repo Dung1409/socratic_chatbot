@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BookOpen,
+  CheckCheck,
   LineChart,
   Menu,
   GraduationCap,
@@ -32,9 +33,23 @@ const studentNav = [
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const search = useRouterState({
-    select: (s) => s.location.search as { session?: string; assignment?: string },
+    select: (s) =>
+      s.location.search as {
+        session?: string;
+        assignment?: string;
+        lesson?: string;
+        view?: string;
+        filter?: string;
+      },
   });
-  const activePath = path === "/tien-trinh" ? "/tien-trinh" : "/";
+  const activePath =
+    path === "/tien-trinh"
+      ? "/tien-trinh"
+      : path === "/" && search.filter !== "submitted" && search.view !== "results"
+        ? "/"
+        : "";
+  const submittedResults =
+    path === "/" && (search.filter === "submitted" || search.view === "results");
   const learning = path === "/phien-hoc" && Boolean(search.session || search.assignment);
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => {
@@ -103,17 +118,28 @@ export function AppShell({ children }: { children: ReactNode }) {
       <>
         <div
           className={cn(
-            "flex shrink-0 items-center gap-2.5 border-b px-5",
-            compact ? "h-28 justify-between gap-2 pl-5 pr-0" : "h-24",
-            compact && collapsed && "gap-0 pl-1",
+            "relative flex shrink-0 items-center gap-2 border-b px-3",
+            compact ? "h-28 justify-between pl-3 pr-1" : "h-24",
+            compact && collapsed && "h-24 flex-col justify-center gap-2 px-0",
           )}
+          onClick={compact && collapsed ? toggleNavigation : undefined}
+          role={compact && collapsed ? "button" : undefined}
+          aria-label={compact && collapsed ? "Mở rộng thanh điều hướng" : undefined}
+          tabIndex={compact && collapsed ? 0 : undefined}
+          onKeyDown={
+            compact && collapsed
+              ? (event) => {
+                  if (event.key === "Enter" || event.key === " ") toggleNavigation();
+                }
+              : undefined
+          }
         >
           <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
             <GraduationCap aria-hidden="true" className="size-[18px]" />
           </div>
-          <div className={cn("min-w-0 leading-tight", label)}>
-            <p className="text-lg font-semibold leading-6">{APP_NAME}</p>
-            <p className="mt-1 text-xs leading-4 text-muted-foreground">
+          <div className={cn("min-w-0 flex-1 leading-tight", label)}>
+            <p className="text-base font-semibold leading-5">{APP_NAME}</p>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
               Phát triển năng lực tư duy
             </p>
           </div>
@@ -125,8 +151,10 @@ export function AppShell({ children }: { children: ReactNode }) {
               aria-label={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
               title={collapsed ? "Mở rộng thanh điều hướng" : "Thu gọn thanh điều hướng"}
               className={cn(
-                "shrink-0 rounded-r-none border border-r-0 bg-sidebar text-muted-foreground shadow-none",
-                collapsed ? "size-7" : "size-11",
+                "shrink-0 bg-sidebar text-muted-foreground shadow-none",
+                collapsed
+                  ? "hidden"
+                  : "absolute -right-3 top-1/2 z-50 size-7 -translate-y-1/2 rounded-md border bg-card",
               )}
               onClick={toggleNavigation}
             >
@@ -199,6 +227,35 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </TooltipContent>
                 </Tooltip>
               ))}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link
+                    to="/"
+                    search={{ filter: "submitted" }}
+                    aria-label="Bài đã nộp"
+                    aria-current={submittedResults ? "page" : undefined}
+                    onClick={() => setOpen(false)}
+                    className={cn(
+                      "flex min-h-12 items-center gap-3 rounded-lg px-3 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+                      submittedResults
+                        ? "bg-primary-soft font-semibold text-primary"
+                        : "text-foreground/75 hover:bg-muted",
+                      compact && "justify-center px-0",
+                      compact && !collapsed && "justify-start px-3",
+                    )}
+                  >
+                    <CheckCheck
+                      aria-hidden="true"
+                      className="size-[18px] shrink-0"
+                      strokeWidth={1.75}
+                    />
+                    <span className={label}>Bài đã nộp</span>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="bg-foreground text-white">
+                  Bài đã nộp
+                </TooltipContent>
+              </Tooltip>
             </TooltipProvider>
           </nav>
         </div>
@@ -324,7 +381,7 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col md:min-h-28 md:flex-row md:items-end gap-4 justify-between px-6 lg:px-10 py-4 border-b bg-card">
+    <div className="flex flex-col justify-between gap-4 border-b bg-card px-6 py-4 md:min-h-28 md:flex-row md:items-center lg:px-10">
       <div>
         {eyebrow && (
           <p className="text-xs font-medium text-secondary uppercase tracking-wider mb-1.5">

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, BookOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { api } from "@/lib/api";
@@ -11,7 +11,18 @@ import { Button } from "@/components/ui/button";
 import { AssignmentPanel } from "@/components/session/AssignmentPanel";
 import { LessonTabs } from "./LessonTabs";
 
-export function LessonDetail({ id, view }: { id: string; view: "assignment" | "results" }) {
+export function LessonDetail({
+  id,
+  view,
+  itemId,
+  fromSubmitted = false,
+}: {
+  id: string;
+  view: "assignment" | "results";
+  itemId?: string;
+  fromSubmitted?: boolean;
+}) {
+  const navigate = useNavigate();
   const [panelOpen, setPanelOpen] = useState(true);
   const assignments = useQuery({ queryKey: ["assignments"], queryFn: api.assignments });
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
@@ -25,7 +36,7 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
     return (
       <>
         <Button asChild variant="link">
-          <Link to="/" search={{}}>
+          <Link to="/" search={fromSubmitted ? { filter: "submitted" } : {}}>
             ← Bài học của tôi
           </Link>
         </Button>
@@ -51,7 +62,17 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
       </div>
     );
   const { saved, total, submitted } = lessonState(assignment, sessions.data ?? []);
-  const results = saved.filter((session) => session.submitted && session.assessment);
+  const allResults = saved.filter((session) => session.submitted && session.assessment);
+  const selectedItemId =
+    itemId ?? allResults[0]?.assignment.active_item_id ?? assignment.items?.[0]?.id;
+  const results = allResults.filter(
+    (session) => session.assignment.active_item_id === selectedItemId,
+  );
+  const selectedItem = assignment.items?.find((entry) => entry.id === selectedItemId);
+  const selectedResult = results[0];
+  const selectedContextSession = saved.find(
+    (session) => session.assignment.active_item_id === selectedItemId,
+  );
   const contextSession = saved[0];
   return (
     <div className="lesson-workspace mx-auto flex min-h-[calc(100dvh-56px)] w-full min-w-0 bg-background">
@@ -59,14 +80,23 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
         <header
           className={`learning-session-header relative grid min-h-28 shrink-0 grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_1fr] items-center gap-x-2 gap-y-1 border-b bg-card px-6 py-2 lg:px-10 ${!panelOpen ? "sm:pr-16" : ""}`}
         >
-          <Button asChild variant="ghost" className="h-8 shrink-0 justify-self-start gap-1 px-1 text-xs">
-            <Link to="/" search={{}}>
+          <Button
+            asChild
+            variant="ghost"
+            className="h-8 shrink-0 justify-self-start gap-1 px-1 text-xs"
+          >
+            <Link to="/" search={fromSubmitted ? { filter: "submitted" } : {}}>
               <ArrowLeft aria-hidden="true" />
-              <span className="hidden sm:inline">Bài học của tôi</span>
+              <span className="hidden sm:inline">
+                {fromSubmitted ? "Bài đã nộp" : "Bài học của tôi"}
+              </span>
             </Link>
           </Button>
           <div className="col-span-2 row-start-2 min-w-0 self-center">
-            <h1 className="truncate text-xl font-semibold leading-7 tracking-tight" title={assignment.title}>
+            <h1
+              className="truncate text-xl font-semibold leading-7 tracking-tight"
+              title={assignment.title}
+            >
               {readableLessonTitle(assignment.title)}
             </h1>
             <p className="learning-session-meta mt-1 truncate text-xs leading-4 text-muted-foreground">
@@ -108,11 +138,9 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
         </header>
         <main id="lesson-content" className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           <div className="learning-chat-content mx-auto w-full space-y-5">
-            <LessonTabs
-              assignment={assignment}
-              sessions={sessions.data ?? []}
-              selected={view}
-            />
+            {view !== "results" && (
+              <LessonTabs assignment={assignment} sessions={sessions.data ?? []} selected={view} />
+            )}
             {view === "assignment" ? (
               <>
                 <section className="rounded-xl border bg-card p-5">
@@ -228,7 +256,11 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
               </>
             ) : results.length ? (
               <section className="space-y-4" aria-label="Kết quả bài học">
-                <h2 className="text-lg font-semibold">Kết quả bài học</h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-lg font-semibold">
+                    {selectedItem ? `Kết quả ${selectedItem.label}` : "Kết quả bài học"}
+                  </h2>
+                </div>
                 {results.map((session) => (
                   <article key={session.id} className="rounded-xl border bg-card p-5">
                     <h3 className="font-semibold">
@@ -264,9 +296,15 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
               </section>
             ) : (
               <section className="rounded-xl border bg-card p-5">
-                <h2 className="text-lg font-semibold">Bài học chưa có câu đã nộp</h2>
+                <h2 className="text-lg font-semibold">
+                  {selectedItem
+                    ? `${selectedItem.label} chưa có phiếu kết quả`
+                    : "Bài học chưa có câu đã nộp"}
+                </h2>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Chọn một câu trong đề bài để bắt đầu học và xem kết quả tại đây sau khi nộp.
+                  {selectedItem
+                    ? "Phiếu của câu này sẽ xuất hiện sau khi em nộp bài tổng hợp."
+                    : "Chọn một câu trong đề bài để bắt đầu học và xem kết quả tại đây sau khi nộp."}
                 </p>
               </section>
             )}
@@ -292,7 +330,64 @@ export function LessonDetail({ id, view }: { id: string; view: "assignment" | "r
             </Button>
           </div>
           <div className="learning-panel-scroll min-h-0 flex-1 overflow-y-auto p-5">
-            {contextSession ? (
+            {view === "results" ? (
+              <div className="space-y-5">
+                {assignment.items && assignment.items.length > 1 && (
+                  <label className="block text-xs font-medium text-muted-foreground">
+                    Câu đang xem
+                    <select
+                      aria-label="Câu đang xem kết quả"
+                      className="mt-1 block h-10 w-full rounded-md border bg-background px-3 text-sm font-normal text-foreground"
+                      value={selectedItemId}
+                      onChange={(event) =>
+                        void navigate({
+                          to: "/",
+                          search: {
+                            lesson: assignment.id,
+                            view: "results",
+                            item: event.target.value,
+                            ...(fromSubmitted ? { filter: "submitted" as const } : {}),
+                          },
+                        })
+                      }
+                    >
+                      {assignment.items.map((item) => {
+                        const result = allResults.find(
+                          (entry) => entry.assignment.active_item_id === item.id,
+                        );
+                        return (
+                          <option key={item.id} value={item.id}>
+                            {item.label} · {result ? "Đã có kết quả" : "Chưa có kết quả"}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                )}
+                {selectedContextSession ? (
+                  <AssignmentPanel
+                    session={selectedContextSession}
+                    onViewAssignment={() =>
+                      window.document
+                        .getElementById("lesson-content")
+                        ?.scrollTo({ top: 0, behavior: "smooth" })
+                    }
+                  />
+                ) : (
+                  <section>
+                    <h3 className="text-sm font-medium text-muted-foreground">Thông tin đề</h3>
+                    <p className="mt-2 break-words text-lg font-semibold leading-7">
+                      {selectedItem?.label ?? readableLessonTitle(assignment.title)}
+                    </p>
+                    {selectedItem?.prompt && (
+                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6">
+                        {selectedItem.prompt}
+                      </p>
+                    )}
+                  </section>
+                )}
+              </div>
+            ) : contextSession ? (
               <AssignmentPanel
                 session={contextSession}
                 onViewAssignment={() =>

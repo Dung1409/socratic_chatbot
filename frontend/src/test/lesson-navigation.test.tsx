@@ -47,14 +47,14 @@ function show(path: string) {
   return router;
 }
 
-it("has two primary destinations and exactly one row for a lesson with its source", async () => {
+it("has three primary destinations and exactly one row for a lesson with its source", async () => {
   show("/");
   const list = await screen.findByRole("list", { name: "Danh sách bài học" });
   expect(within(list).getAllByRole("listitem")).toHaveLength(1);
   expect(screen.queryByText("Bản nguồn của đề")).not.toBeInTheDocument();
   expect(
     within(screen.getByRole("navigation", { name: "Điều hướng chính" })).getAllByRole("link"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
   expect(api.prepareSession).not.toHaveBeenCalled();
   expect(api.start).not.toHaveBeenCalled();
 });
@@ -70,8 +70,8 @@ it("does not mount a library or document history in the creation screen", async 
 
 it("opens only one lesson's result view without starting a conversation", async () => {
   show("/?lesson=lesson&view=results");
-  await screen.findByRole("heading", { name: "Bài học chưa có câu đã nộp" });
-  expect(screen.getByRole("navigation", { name: "Nội dung bài học" })).toBeInTheDocument();
+  await screen.findByRole("heading", { name: "Câu 1 chưa có phiếu kết quả" });
+  expect(screen.queryByRole("navigation", { name: "Nội dung bài học" })).not.toBeInTheDocument();
   expect(screen.queryByRole("list", { name: "Danh sách bài học" })).not.toBeInTheDocument();
   expect(api.prepareSession).not.toHaveBeenCalled();
   expect(api.start).not.toHaveBeenCalled();

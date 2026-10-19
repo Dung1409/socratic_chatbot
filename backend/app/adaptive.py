@@ -14,6 +14,7 @@ from .db import Database
 from .support import DIFFICULTIES, support_context
 
 LEASE_SECONDS = 180  # Generation and semantic review each have a 60-second provider timeout.
+OPENING_POLICY_VERSION = "active-question-2"
 
 
 def timestamp():
@@ -98,7 +99,7 @@ class AdaptiveSessions:
             "done": False, "submitted": False, "essay": "", "turns": [],
             "support_events": [], "assessment": None, "pending_action": None,
             "version": 0, "requests": {}, "created_at": timestamp(), "updated_at": timestamp(),
-            "visual_context_version": 1,
+            "visual_context_version": 1, "opening_policy_version": OPENING_POLICY_VERSION,
         }
         if assignment.get("active_item_id"):
             session["opening_item_id"] = assignment["active_item_id"]
@@ -120,7 +121,9 @@ class AdaptiveSessions:
         assignment = session.get("assignment") or {}
         has_visuals = bool(assignment.get("visual_refs") or assignment.get("visual_candidates"))
         needs_visual_refresh = has_visuals and not session.get("visual_context_version")
-        if not item_id or (session.get("opening_item_id") == item_id and not needs_visual_refresh) or any(
+        needs_opening_refresh = session.get("opening_policy_version") != OPENING_POLICY_VERSION
+        if not item_id or (session.get("opening_item_id") == item_id
+                           and not needs_visual_refresh and not needs_opening_refresh) or any(
                 turn.get("kind") == "student" for turn in session.get("turns", [])):
             return session
         try:
@@ -130,7 +133,8 @@ class AdaptiveSessions:
         refreshed = copy.deepcopy(session)
         refreshed.update(plan=plan.model_dump(), turns=[], support_events=[], assessment=None,
                          pending_action=None, current_objective=None, done=False, step=0,
-                         hint_tier=0, opening_item_id=item_id, visual_context_version=1)
+                         hint_tier=0, opening_item_id=item_id, visual_context_version=1,
+                         opening_policy_version=OPENING_POLICY_VERSION)
         response_turn(plan.opening, refreshed)
         with self.db.connect(write=True) as conn:
             current = require_session(self.db, conn, session_id, owner_id)

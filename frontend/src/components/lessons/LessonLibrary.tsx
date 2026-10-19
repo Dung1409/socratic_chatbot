@@ -3,7 +3,13 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, FileText, Plus } from "lucide-react";
 import { api } from "@/lib/api";
-import { lessonFilters, lessonState, readableLessonTitle, unassignedDocuments, type LessonFilter } from "@/lib/lessons";
+import {
+  lessonFilters,
+  lessonState,
+  readableLessonTitle,
+  unassignedDocuments,
+  type LessonFilter,
+} from "@/lib/lessons";
 import { learningDate, taskLabel } from "@/lib/learning-state";
 import { PageHeader } from "@/components/AppShell";
 import { ApiState } from "@/components/ApiState";
@@ -38,7 +44,6 @@ export function LessonLibrary({
     review: sources.length,
     new: states.filter((entry) => entry.state === "new").length,
     active: states.filter((entry) => entry.state === "active").length,
-    submitted: states.filter((entry) => entry.state === "submitted").length,
   };
   const matches = (value: string) =>
     value.toLocaleLowerCase("vi").includes(search.trim().toLocaleLowerCase("vi"));
@@ -55,8 +60,12 @@ export function LessonLibrary({
   return (
     <>
       <PageHeader
-        title="Bài học của tôi"
-        desc="Mỗi bài học gồm đề bài, cuộc trao đổi và kết quả của em."
+        title={filter === "submitted" ? "Bài đã nộp" : "Bài học của tôi"}
+        desc={
+          filter === "submitted"
+            ? "Các bài đã nộp và phiếu kết quả của em."
+            : "Mỗi bài học gồm đề bài, cuộc trao đổi và kết quả của em."
+        }
         action={
           <Button asChild className="min-h-11">
             <Link to="/de-bai" search={{ tab: "quick" }}>
@@ -66,19 +75,20 @@ export function LessonLibrary({
         }
       />
       <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6 lg:p-10">
-        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Tóm tắt bài học">
-          {[
-            ["Tổng bài học", counts.all],
-            ["Cần kiểm tra", counts.review],
-            ["Đang học", counts.active],
-            ["Đã nộp", counts.submitted],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-lg border bg-card p-4">
-              <dt className="text-xs text-muted-foreground">{label}</dt>
-              <dd className="mt-1 text-2xl font-semibold">{value}</dd>
-            </div>
-          ))}
-        </dl>
+        {filter !== "submitted" && (
+          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-label="Tóm tắt bài học">
+            {[
+              ["Tổng bài học", counts.all],
+              ["Cần kiểm tra", counts.review],
+              ["Đang học", counts.active],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-lg border bg-card p-4">
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd className="mt-1 text-2xl font-semibold">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
         <Input
           className="min-h-11"
           aria-label="Tìm bài học"
@@ -86,19 +96,21 @@ export function LessonLibrary({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Lọc bài học">
-          {lessonFilters.map(([value, label]) => (
-            <Button
-              key={value}
-              className="min-h-11"
-              variant={filter === value ? "default" : "outline"}
-              aria-pressed={filter === value}
-              onClick={() => onFilter(value)}
-            >
-              {label} ({counts[value]})
-            </Button>
-          ))}
-        </div>
+        {filter !== "submitted" && (
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Lọc bài học">
+            {lessonFilters.map(([value, label]) => (
+              <Button
+                key={value}
+                className="min-h-11"
+                variant={filter === value ? "default" : "outline"}
+                aria-pressed={filter === value}
+                onClick={() => onFilter(value)}
+              >
+                {label} ({counts[value]})
+              </Button>
+            ))}
+          </div>
+        )}
         {loading || error ? (
           <ApiState
             loading={loading}
@@ -182,7 +194,10 @@ export function LessonLibrary({
                     >
                       {state === "submitted" &&
                       saved.some((session) => session.submitted && session.assessment) ? (
-                        <Link to="/" search={{ lesson: assignment.id, view: "results" }}>
+                        <Link
+                          to="/"
+                          search={{ lesson: assignment.id, view: "results", filter: "submitted" }}
+                        >
                           Xem kết quả
                         </Link>
                       ) : (

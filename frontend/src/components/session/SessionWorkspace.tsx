@@ -8,17 +8,21 @@ import {
   ArrowLeft,
   Save,
 } from "lucide-react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { AssessmentReport } from "@/components/AssessmentReport";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { type Session } from "@/lib/api";
 import { readableLessonTitle } from "@/lib/lessons";
 import { AssignmentQuestionImages } from "./AssignmentQuestionImages";
@@ -45,6 +49,7 @@ export function SessionWorkspace({
 }: Props) {
   const navigate = useNavigate();
   const [leaving, setLeaving] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
   const siblings = useQuery({
     queryKey: ["sessions"],
     queryFn: api.sessions,
@@ -74,6 +79,7 @@ export function SessionWorkspace({
   const previousSubmitted = useRef(false);
   const assignment = session.assignment;
   const taskType = session.plan?.task_type ?? assignment.task_type;
+  const activeItem = assignment.items?.find((item) => item.id === assignment.active_item_id);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1100px)");
@@ -159,7 +165,10 @@ export function SessionWorkspace({
             <span className="hidden sm:inline">Bài học của tôi</span>
           </Button>
           <div className="col-span-2 row-start-2 min-w-0 self-center">
-            <h1 className="truncate text-xl font-semibold leading-7 tracking-tight" title={assignment.title}>
+            <h1
+              className="truncate text-xl font-semibold leading-7 tracking-tight"
+              title={assignment.title}
+            >
               {readableLessonTitle(assignment.title)}
             </h1>
             <div className="learning-session-meta mt-1 flex flex-wrap items-center gap-x-2 text-xs leading-4 text-muted-foreground">
@@ -327,15 +336,25 @@ export function SessionWorkspace({
                 <CheckCircle2 aria-hidden="true" className="size-4" /> Phiên học đã được lưu
               </span>
               {session.assessment && (
-                <Button asChild variant="link" className="h-10 px-0">
-                  <Link to="/" search={{ lesson: session.assignment_id, view: "results" }}>
-                    Xem kết quả bài học
-                  </Link>
+                <Button variant="link" className="h-10 px-0" onClick={() => setResultOpen(true)}>
+                  Xem phiếu đánh giá
                 </Button>
               )}
             </div>
           </footer>
         )}
+        <Dialog open={resultOpen} onOpenChange={setResultOpen}>
+          <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Kết quả {activeItem?.label ?? "câu này"}</DialogTitle>
+              <DialogDescription>Phiếu đánh giá của câu trong phiên chat này.</DialogDescription>
+            </DialogHeader>
+            {session.assessment && <AssessmentReport report={session.assessment} />}
+            <DialogFooter>
+              <Button onClick={() => setResultOpen(false)}>Đóng, quay lại đoạn chat</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </section>
       {desktop && panelOpen && (
         <aside

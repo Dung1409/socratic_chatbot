@@ -181,9 +181,17 @@ class OpenAITutor:
         _, guidance = tutor_profile(session["assignment"])
         anchor = support_context(session)
         context = {"assignment": self._study_context(session["assignment"]), "plan": session["plan"],
-                   "turns": session["turns"], "action": action, "support_context": anchor}
+                   # Keep the request bounded; the server-owned objective anchor
+                   # is always included even when older turns are omitted.
+                   "turns": session["turns"][-8:], "action": action,
+                   "support_context": anchor,
+                   "objective_context": {key: anchor[key] for key in (
+                       "root_objective", "active_objective", "micro_objective",
+                       "depth", "max_depth", "understanding_status")}}
         result = self._call(TutorReply,
-                          "Use only the active question in assignment.prompt. Never discuss, preview, "
+                          "Use only the active question in assignment.prompt. The immutable "
+                          "objective_context.root_objective is the session goal; every response must "
+                          "serve it. Never replace it with a sibling task or a new essay. Never discuss, preview, "
                           "hint at, or ask about a sibling question. Do not announce or describe the "
                           "next question before the current question has been submitted and its report "
                           "saved. Override any general readiness threshold: do not wait to demonstrate "
@@ -194,6 +202,9 @@ class OpenAITutor:
                           "to press a finish button. After the report is saved, the app changes questions "
                           "and the next opening may discuss only the newly active question. If the answer "
                           "is wrong or missing a material part, keep tutoring the active question. "
+                          "Do not exceed objective_context.max_depth. If the learner says they do not "
+                          "understand, explain only the smallest missing concept, then ask one check-in "
+                          "question and return to objective_context.active_objective. "
                           + ("The student requested a hint: provide appropriate support or request missing source material. "
                              if action == "hint" else "Read the latest reasoning before choosing a Socratic follow-up for the active question.")
                           + "\n" + guidance,

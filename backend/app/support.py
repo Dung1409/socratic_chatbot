@@ -1,11 +1,27 @@
 """Derive support state from durable turns, including sessions created before this policy."""
 
 MAX_HINTS_WITHOUT_FEEDBACK = 3
+DEFAULT_MAX_DEPTH = 3
+LITERATURE_MAX_DEPTH = 2
 DIFFICULTIES = {
     "understanding": "Em chưa hiểu câu hỏi.",
     "ideas": "Em chưa nghĩ ra ý.",
     "expression": "Em có ý nhưng chưa biết diễn đạt.",
 }
+
+
+def objective_context(session):
+    """Return the server-owned objective anchor for a tutor turn."""
+    assignment = session.get("assignment") or {}
+    root = session.get("root_objective") or assignment.get("prompt") or ""
+    return {
+        "root_objective": root[:2000],
+        "active_objective": session.get("active_objective") or root[:500],
+        "micro_objective": session.get("micro_objective") or "",
+        "depth": int(session.get("objective_depth", 0)),
+        "max_depth": int(session.get("max_objective_depth", DEFAULT_MAX_DEPTH)),
+        "understanding_status": session.get("understanding_status", "unknown"),
+    }
 
 
 def support_context(session):
@@ -30,4 +46,5 @@ def support_context(session):
         "consecutive_hints": consecutive,
         "needs_check_in": consecutive >= MAX_HINTS_WITHOUT_FEEDBACK,
         "difficulty": difficulty,
+        **objective_context(session),
     }

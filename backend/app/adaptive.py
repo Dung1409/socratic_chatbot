@@ -11,7 +11,8 @@ from fastapi import HTTPException
 from .ai_tutor import POLICY_VERSION, TutorError
 from .assessment import SCORING_VERSION, build_report
 from .db import Database
-from .support import DIFFICULTIES, support_context
+from .support import (DEFAULT_MAX_DEPTH, LITERATURE_MAX_DEPTH, DIFFICULTIES,
+                      support_context)
 
 LEASE_SECONDS = 180  # Generation and semantic review each have a 60-second provider timeout.
 OPENING_POLICY_VERSION = "active-question-2"
@@ -70,6 +71,16 @@ def response_turn(reply, session, requested=False):
         })
     else:
         session["hint_tier"] = 0
+    session["objective_depth"] = min(
+        session.get("objective_depth", 0) + 1,
+        session.get("max_objective_depth", DEFAULT_MAX_DEPTH),
+    )
+    if support:
+        session["micro_objective"] = anchor["active_objective"]
+    else:
+        session["active_objective"] = reply.objective
+        session["micro_objective"] = reply.objective
+    session["understanding_status"] = "unknown"
     session["turns"].append(turn)
     session["current_objective"] = turn["objective"]
     if reply.kind == "ready":
@@ -90,6 +101,10 @@ class AdaptiveSessions:
             plan = self.tutor.plan(assignment)
         except TutorError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
+        subject = str(assignment.get("subject") or "").casefold()
+        max_depth = (LITERATURE_MAX_DEPTH if any(value in subject for value in
+                     ("ngữ văn", "ngu van", "văn học", "van hoc")) else DEFAULT_MAX_DEPTH)
+        root_objective = (assignment.get("prompt") or plan.summary or "").strip()[:2000]
         session = {
             "id": str(uuid4()), "assignment_id": assignment["id"], "assignment": assignment,
             "tutor_mode": "openai", "model": self.tutor.model,
@@ -100,10 +115,18 @@ class AdaptiveSessions:
             "support_events": [], "assessment": None, "pending_action": None,
             "version": 0, "requests": {}, "created_at": timestamp(), "updated_at": timestamp(),
             "visual_context_version": 1, "opening_policy_version": OPENING_POLICY_VERSION,
+            "root_objective": root_objective,
+            "active_objective": plan.opening.objective,
+            "micro_objective": plan.opening.objective,
+            "objective_depth": 0,
+            "max_objective_depth": max_depth,
+            "understanding_status": "unknown",
+            "objective_path": [], "drift_count": 0,
         }
         if assignment.get("active_item_id"):
             session["opening_item_id"] = assignment["active_item_id"]
         response_turn(plan.opening, session)
+        session["objective_depth"] = 0
         with self.db.connect(write=True) as conn:
             existing = next((s for s in self.db.all(conn, "sessions", owner_id=owner_id)
                              if s["assignment_id"] == assignment["id"] and
@@ -134,8 +157,14 @@ class AdaptiveSessions:
         refreshed.update(plan=plan.model_dump(), turns=[], support_events=[], assessment=None,
                          pending_action=None, current_objective=None, done=False, step=0,
                          hint_tier=0, opening_item_id=item_id, visual_context_version=1,
-                         opening_policy_version=OPENING_POLICY_VERSION)
+                         opening_policy_version=OPENING_POLICY_VERSION,
+                         root_objective=(assignment.get("prompt") or plan.summary or "").strip()[:2000],
+                         active_objective=plan.opening.objective,
+                         micro_objective=plan.opening.objective,
+                         objective_depth=0, understanding_status="unknown",
+                         objective_path=[], drift_count=0)
         response_turn(plan.opening, refreshed)
+        refreshed["objective_depth"] = 0
         with self.db.connect(write=True) as conn:
             current = require_session(self.db, conn, session_id, owner_id)
             if current.get("version") != session.get("version") or any(

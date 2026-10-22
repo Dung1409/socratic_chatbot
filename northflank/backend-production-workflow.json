@@ -2,6 +2,9 @@
   "apiVersion": "v1.2",
   "name": "backend-production-release",
   "description": "Backup PostgreSQL, build backend, run migrations, then deploy the API.",
+  "arguments": {
+    "BUILD_SHA": ""
+  },
   "options": {
     "autorun": false,
     "concurrencyPolicy": "forbid",

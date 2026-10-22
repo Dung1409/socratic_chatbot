@@ -227,6 +227,24 @@ class OpenAITutor:
             # failure; duplicate hints are already rejected by response_turn().
             # Only discard support that is off-topic or gives the answer away.
             if not review.on_target or review.gives_away_answer:
+                # A review model can be overly conservative when the student uses
+                # equivalent terminology or a subject-specific concept bridge.
+                # Give the tutor one bounded repair pass before surfacing an error.
+                repaired = self._call(
+                    TutorReply,
+                    "Sửa lại gợi ý dưới đây để bám trực tiếp vào câu hỏi đang học. "
+                    "Giữ đúng môn học, mục tiêu và độ sâu hiện tại; các cách gọi tương "
+                    "đương hoặc mối quan hệ nền tảng trong chính môn đó vẫn là cùng một "
+                    "mạch kiến thức. Chỉ đưa một gợi ý Socratic ngắn, không nêu đáp án "
+                    "cuối cùng, không chuyển sang câu khác và không nhắc đến bước kiểm duyệt.\n"
+                    + guidance,
+                    {**context, "candidate": result.model_dump(),
+                     "review_reason": review.reason},
+                    model=session["model"],
+                    images=self._images_for(session["assignment"]),
+                )
+                if repaired.kind in ("support", "question"):
+                    return repaired
                 raise TutorError("Gợi ý chưa bám sát câu hỏi hoặc chưa bổ sung hỗ trợ phù hợp. "
                                  "Em có thể thử lại; lượt này chưa tính hỗ trợ.")
         return result

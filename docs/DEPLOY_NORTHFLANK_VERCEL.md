@@ -108,7 +108,8 @@ docker build --file backend/Dockerfile --tag socratic-backend:RELEASE_TAG backen
 
 Không truyền runtime secrets lúc build. `.dockerignore` loại `.env`, DB/data local và test.
 Image dùng UID/GID `10001:10001`, không có ENTRYPOINT cản command override. Dockerfile root
-dành cho image frontend/backend chung, không cần dùng khi frontend ở Vercel.
+hiện là backend-only để Northflank không build frontend; frontend được deploy trên Vercel.
+`Dockerfile.combined` chỉ dành cho trường hợp cần đóng gói frontend/backend chung.
 Image mặc định production; Compose đặt development để giữ local HTTP và dữ liệu cũ.
 
 ## 5. Migration Job

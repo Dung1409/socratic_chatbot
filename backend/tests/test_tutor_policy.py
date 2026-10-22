@@ -29,7 +29,9 @@ def test_support_review_rejects_drift_rephrasing_or_answer_giveaway(monkeypatch,
     def call(schema, instruction, context, **kwargs):
         calls.append(context)
         if schema is TutorReply:
-            return reply("Em chọn cảm xúc lo lắng hay tủi thân?", "support")
+            if len(calls) == 1:
+                return reply("Em chọn cảm xúc lo lắng hay tủi thân?", "support")
+            return reply("Mình chưa có dữ liệu để kết luận.", "source_request")
         assert schema is SupportReview
         return SupportReview(on_target=on_target, adds_useful_support=useful,
                              gives_away_answer=gives_answer, reason="Kiểm tra gợi ý")
@@ -40,7 +42,8 @@ def test_support_review_rejects_drift_rephrasing_or_answer_giveaway(monkeypatch,
     else:
         with pytest.raises(TutorError, match="chưa bám sát"):
             tutor.reply(book_session(), "hint")
-    assert len(calls) == 2
+    expected_calls = 2 if on_target and not gives_answer else 3
+    assert len(calls) == expected_calls
     assert calls[0]["support_context"]["question_id"] == "question"
     assert calls[1]["support_context"]["objective"] == "Giải thích vai trò đọc sách"
 
@@ -54,6 +57,27 @@ def test_on_target_support_is_returned_and_source_request_needs_no_support_revie
     assert tutor.reply(book_session(), "hint") == candidate
     candidate = reply("Em bổ sung ngữ liệu nhé.", "source_request")
     assert tutor.reply(book_session(), "hint") == candidate
+
+
+def test_review_false_gets_one_bounded_repair_pass(monkeypatch):
+    tutor = OpenAITutor()
+    candidate = reply("Em hãy xét vị trí của M trên đường tròn.", "support")
+    repaired = reply("Hãy nối O với I và M rồi cho biết bất đẳng thức độ dài nào áp dụng.", "support")
+    calls = []
+
+    def call(schema, instruction, context, **kwargs):
+        calls.append(schema)
+        if schema is TutorReply and len(calls) == 1:
+            return candidate
+        if schema is SupportReview:
+            return SupportReview(on_target=False, adds_useful_support=True,
+                                 gives_away_answer=False, reason="Thuật ngữ khác nhau")
+        assert schema is TutorReply
+        return repaired
+
+    monkeypatch.setattr(tutor, "_call", call)
+    assert tutor.reply(book_session(), "hint") == repaired
+    assert calls == [TutorReply, SupportReview, TutorReply]
 
 
 def test_unanswered_side_questions_cannot_force_zero_and_clarification_is_not_evidence(monkeypatch):

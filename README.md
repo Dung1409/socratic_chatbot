@@ -153,8 +153,8 @@ docker build -t socratic-backend ./backend
 
 Khi chạy frontend riêng, Nginx cần kết nối được hostname `backend` trên cùng
 Docker network. Compose tự tạo network và hostname này.
-`Dockerfile` tại thư mục gốc vẫn hỗ trợ cách đóng gói cả frontend và backend
-chung một image; Compose hiện dùng hai Dockerfile riêng ở trên.
+`Dockerfile` tại thư mục gốc dành cho image backend production; image frontend/backend
+chung (nếu cần) dùng `Dockerfile.combined`. Compose hiện dùng hai Dockerfile riêng ở trên.
 
 Hai named volume giữ dữ liệu khi restart, build lại hoặc `docker compose down`:
 

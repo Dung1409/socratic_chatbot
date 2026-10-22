@@ -1,7 +1,7 @@
 {
   "apiVersion": "v1.2",
   "name": "backend-production-release",
-  "description": "Backup PostgreSQL, build backend, run migrations, then deploy the API.",
+  "description": "Build backend, run migrations, then deploy the API. PostgreSQL backups are manual on the Free plan.",
   "arguments": {
     "BUILD_SHA": ""
   },
@@ -15,15 +15,6 @@
     "spec": {
       "type": "sequential",
       "steps": [
-        {
-          "kind": "AddonBackup",
-          "ref": "backup-postgres",
-          "spec": {
-            "addonId": "socratic-db",
-            "backupType": "snapshot"
-          },
-          "condition": "success"
-        },
         {
           "kind": "Build",
           "ref": "build-backend",

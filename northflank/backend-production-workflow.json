@@ -1,0 +1,83 @@
+{
+  "apiVersion": "v1.2",
+  "name": "backend-production-release",
+  "description": "Backup PostgreSQL, build backend, run migrations, then deploy the API.",
+  "options": {
+    "autorun": false,
+    "concurrencyPolicy": "forbid",
+    "runOnUpdate": false
+  },
+  "spec": {
+    "kind": "Workflow",
+    "spec": {
+      "type": "sequential",
+      "steps": [
+        {
+          "kind": "AddonBackup",
+          "ref": "backup-postgres",
+          "spec": {
+            "addonId": "socratic-db",
+            "backupType": "snapshot"
+          },
+          "condition": "success"
+        },
+        {
+          "kind": "Build",
+          "ref": "build-backend",
+          "spec": {
+            "id": "socratic-backend-build",
+            "type": "service",
+            "branch": "main",
+            "sha": "${args.BUILD_SHA}",
+            "reuseExistingBuilds": true,
+            "buildRuleFallThroughHandling": "fail"
+          },
+          "condition": "success"
+        },
+        {
+          "kind": "Release",
+          "ref": "release-migration-image",
+          "spec": {
+            "type": "build",
+            "origin": {
+              "id": "socratic-backend-build",
+              "branch": "${refs.build-backend.branch}",
+              "build": "${refs.build-backend.id}"
+            },
+            "target": {
+              "id": "socratic-migrate",
+              "type": "job"
+            }
+          },
+          "condition": "running"
+        },
+        {
+          "kind": "JobRun",
+          "ref": "run-migration",
+          "spec": {
+            "jobId": "socratic-migrate"
+          },
+          "condition": "success"
+        },
+        {
+          "kind": "Release",
+          "ref": "deploy-api",
+          "spec": {
+            "type": "build",
+            "origin": {
+              "id": "socratic-backend-build",
+              "branch": "${refs.build-backend.branch}",
+              "build": "${refs.build-backend.id}"
+            },
+            "target": {
+              "id": "socratic-api",
+              "type": "service"
+            }
+          },
+          "condition": "running"
+        }
+      ]
+    }
+  },
+  "triggers": []
+}

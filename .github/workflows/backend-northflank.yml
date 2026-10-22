@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "northflank/**"
       - ".github/workflows/backend-northflank.yml"
   push:
     branches: [main]
     paths:
       - "backend/**"
+      - "northflank/**"
       - ".github/workflows/backend-northflank.yml"
   workflow_dispatch:
 
